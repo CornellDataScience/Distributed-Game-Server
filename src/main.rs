@@ -14,15 +14,38 @@ Each node should
 - have a queue of requests it receives and responds to
 */
 
+
+// on state machines
+// Easier implementation:
+// have an enum and pattern match
+// node that holds the enum has all the functionality and vars needed for all
+// states
+// match on the enum
+// Harder implementation:
+// State structs - hold specific data
+// Node struct - hold common data
+// still need an enum wrapper???
+// enum = 
+// _(struct)
+// loop {
+//     let e = match e {
+//         Follower x => x.run (evaluates to e using from(self))
+//         Candidate x => .run
+//         Leader x => .run
+//         _ => exception
+//     }
+// }
+// but i cant get run to evaluate to the right thing for 
+
+pub enum State {
+    F(Node<Follower>),
+    C(Node<Candidate>)
+}
+
 struct Node<S> {
-    // currentTerm
-    // votedFor
-    // log[]
-    // timer: timer::Timer
     state: S
 }
 
-// try testing if adding raftstate also works here
 impl Node<Follower> {
     fn new() -> Node<Follower> {
         Node {
@@ -33,32 +56,32 @@ impl Node<Follower> {
     }
 }
 impl RaftState for Node<Follower>{
-    fn run(&self) {
+    fn run(self) -> State {
 
         // while timer has not timed out, do stuff
         // when timer has timed out, transition to candidate state
 
-        // for some reason this doesn't print unless stays in function
-        // afterwards
-        // is this because the whole context is deleted after all lines have
-        // been read through??
-        let _guard = self.state.timer.schedule_with_delay(chrono::Duration::milliseconds(100), || {
-            println!("timed out");
-        });
-        _guard.ignore();
-        println!("end follower run");
+        // TODO: if this guard is not maintained, the timer disappears too...
+
+        // let _guard = self.state.timer.schedule_with_delay(chrono::Duration::milliseconds(100), || {
+        //     println!("timed out");
+        //     let node = Node::<Candidate>::from(self);
+        //     return State::C(node)
+        // });
+        // _guard.ignore();
+
         // loop {
-            
+        //     println!("running");
         // }
+        
+        // transition
+        let node = Node::<Candidate>::from(self);
+        return State::C(node)
     }
 }
 
-// specify functions that raft state must implement
-// do this for readability
-// but i also want to do Node::run(), which decides which state run to use
-// T_T
 pub trait RaftState {
-    fn run(&self);
+    fn run(self) -> State;
 }
 
 // idk if you can do this actually...
@@ -95,10 +118,9 @@ impl Node<Candidate> {
     }
 }
 impl RaftState for Node<Candidate>{
-    fn run(&self) {
+    fn run(self) -> State {
         println!("running candidate");
-        // loop {
-        // }
+        State::C(self)
     }
 }
 
@@ -114,6 +136,15 @@ impl From<Node<Follower>> for Node<Candidate> {
   
 fn main() {
 
+    // time test code
+    // let t = timer::Timer::new();
+    // let _guard = t.schedule_with_delay(chrono::Duration::milliseconds(100), || {
+    //     println!("timed out");
+    // });
+    // loop {
+
+    // }
+
     // test the transitions to different states
     // create a node (starts as follower)
     let node = Node::<Follower>::new();
@@ -123,22 +154,20 @@ fn main() {
     println!("escaped run");
 
     // transition follower to candidate
-    let node = Node::<Candidate>::from(node);
+    // let node = Node::<Candidate>::from(node);
 
-    node.run();
+    // node.run();
 
     // transition candidate to leader
 
     // transition back to follower (bc becomes disconnected for example)
 
-    // time test code
-    // let t = timer::Timer::new();
-    // let _guard = t.schedule_with_delay(chrono::Duration::milliseconds(100), || {
-    //     println!("timed out");
-    // });
-
+    let mut s = State::F(Node::<Follower>::new());
     loop {
-
+        s = match s {
+            State::F(x) => x.run(),
+            State::C(x) => x.run()
+        };
     }
 
 }
