@@ -25,24 +25,25 @@ Each node should
 // State structs - hold specific data
 // Node struct - hold common data
 // still need an enum wrapper???
+//
 // enum = 
 // _(struct)
 // loop {
 //     let e = match e {
-//         Follower x => x.run (evaluates to e using from(self))
-//         Candidate x => .run
-//         Leader x => .run
-//         _ => exception
+//         F x => x.run (evaluates to e using from(self))
+//         C x => .run
+//         L x => .run
 //     }
 // }
 // but i cant get run to evaluate to the right thing for 
 
 pub enum State {
     F(Node<Follower>),
-    C(Node<Candidate>)
+    C(Node<Candidate>),
+    Done
 }
 
-struct Node<S> {
+pub struct Node<S> {
     state: S
 }
 
@@ -75,6 +76,7 @@ impl RaftState for Node<Follower>{
         // }
         
         // transition
+        println!("follower");
         let node = Node::<Candidate>::from(self);
         return State::C(node)
     }
@@ -100,11 +102,11 @@ pub trait RaftState {
 //     // e.g. if Leader receives a response with higher term number, it becomes a follower
 // }
 
-struct Follower {
+pub struct Follower {
     timer: timer::Timer
 }
 
-struct Candidate {
+pub struct Candidate {
     timer: timer::Timer
 }
 
@@ -120,7 +122,9 @@ impl Node<Candidate> {
 impl RaftState for Node<Candidate>{
     fn run(self) -> State {
         println!("running candidate");
-        State::C(self)
+
+        State::Done
+        // State::C(self)
     }
 }
 
@@ -166,7 +170,8 @@ fn main() {
     loop {
         s = match s {
             State::F(x) => x.run(),
-            State::C(x) => x.run()
+            State::C(x) => x.run(),
+            State::Done => { println!("Done"); break }
         };
     }
 
