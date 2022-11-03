@@ -1,0 +1,24 @@
+syntax = "proto3";
+package digs;
+
+service Leader {
+    // Our SayHello rpc accepts HelloRequests and returns HelloReplies
+    rpc AppendEntries (AppendEntriesRequest) returns (AppendEntriesReply);
+}
+
+message AppendEntriesRequest {
+    // Request message contains
+    int32 term = 1;
+    int32 leaderId = 2;
+    int32 prevLogIndex = 3;
+    int32 prevLogTerm = 4;
+    // what type should this be?
+    //entries
+    int32 leaderCommitIdx = 5;
+}
+
+message AppendEntriesReply {
+    // Reply contains
+    string term = 1;
+    bool success = 2;
+}
