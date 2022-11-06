@@ -59,8 +59,11 @@ async fn main() {
     let peers: Vec<&str> = contents.split(",").collect();
     println!("{:?}", peers);
     let n = peers.len();
-    if args.len() < 3 {
-        println!("usage: cargo run -- <client/server> <ip>");
+    if n == 0 {
+        println!("please specify peers in data/peers.txt")
+    }
+    if args.len() < 2 {
+        println!("usage: cargo run -- <client/server>");
         return ();
     }
     get_my_ip().await;
@@ -85,7 +88,7 @@ async fn main() {
             }
             println!("only {} votes received: (need {})", votes, n);
         }
-        "server" => match start_rpc_server(String::from(&args[2])).await {
+        "server" => match start_rpc_server(String::from("[::1]:8080")).await {
             Err(e) => println!("error starting server: {}", e),
             _ => (),
         },
