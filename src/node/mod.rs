@@ -5,6 +5,7 @@ use raft::{
 use std::cmp;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::io;
 use tonic::{Request, Response, Status};
 
 #[cfg(test)]
@@ -83,6 +84,10 @@ impl Node {
         Ok(Response::new(VoteResponse {
             term: self.current_term,
             vote_granted: vote_granted,
+            // voted_for : match voted_for {
+            //     Some(p) => p,
+            //     None => "" 
+            // }
         }))
     }
 
@@ -117,7 +122,12 @@ impl Raft for RaftNode {
         if !can_vote || self.log_newer_than(req.last_log_term, req.last_log_index) {
             return self.respond_to_vote(false);
         }
-        self.voted_for = Some(req.candidate_id);
+        println!("Vote:");
+        let mut vote_for = String::new();
+        let stdin = io::stdin();
+        stdin.read_line(&mut vote_for)?;
+        self.voted_for = Some(vote_for);
+        // self.voted_for = Some(req.candidate_id);
         return self.respond_to_vote(true);
     }
 
