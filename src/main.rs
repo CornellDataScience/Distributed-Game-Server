@@ -3,6 +3,7 @@ use tonic::transport::{Channel, Server};
 pub mod raft {
     tonic::include_proto!("raft");
 }
+use std::fs;
 use std::{env, net::SocketAddr, time::Duration};
 mod node;
 
@@ -22,14 +23,16 @@ async fn start_rpc_server(addr: String) -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
-async fn connect_to(addr: String) -> Result<RaftClient<Channel>, Box<dyn std::error::Error>> {
-    let node = RaftClient::connect(addr).await?;
-    Ok(node)
+async fn connect_to(addr: String) -> Option<RaftClient<Channel>> {
+    match RaftClient::connect(addr).await {
+        Err(_) => None,
+        Ok(node) => Some(node),
+    }
 }
 
 async fn send_request_vote(
-    node: Result<RaftClient<Channel>, Box<dyn std::error::Error>>,
-) -> Result<(), Box<dyn std::error::Error>> {
+    mut node: RaftClient<Channel>,
+) -> Result<tonic::Response<raft::VoteResponse>, tonic::Status> {
     let mut req = tonic::Request::new(VoteRequest {
         candidate_id: String::from("abc"),
         term: 1,
@@ -38,18 +41,7 @@ async fn send_request_vote(
     });
     req.set_timeout(Duration::from_secs(3600));
     println!("sending vote request to follower...");
-    let mut node = match node {
-        Ok(node) => node,
-        Err(e) => {
-            println!("unexpected error: {}", e);
-            return Err(e);
-        }
-    };
-    match node.request_vote(req).await {
-        Err(e) => println!("unexpected error: {}", e),
-        Ok(res) => println!("vote granted = {}", res.into_inner().vote_granted),
-    }
-    Ok(())
+    return node.request_vote(req).await;
 }
 
 async fn get_my_ip() {
@@ -63,20 +55,35 @@ async fn get_my_ip() {
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = env::args().collect();
-
+    let contents = fs::read_to_string("data/peers.txt").expect("cannot read file");
+    let peers: Vec<&str> = contents.split(",").collect();
+    println!("{:?}", peers);
+    let n = peers.len();
     if args.len() < 3 {
         println!("usage: cargo run -- <client/server> <ip>");
         return ();
     }
-
     get_my_ip().await;
     match String::from(&args[1]).as_str() {
         "client" => {
-            let node = connect_to(String::from(&args[2])).await;
-            match send_request_vote(node).await {
-                Err(e) => println!("error starting server: {}", e),
-                _ => (),
+            let mut votes = 0;
+            for addr in peers {
+                if let Some(node) = connect_to(String::from(addr)).await {
+                    match send_request_vote(node).await {
+                        Err(e) => println!("error starting server: {}", e),
+                        Ok(response) => {
+                            if response.into_inner().vote_granted {
+                                votes += 1;
+                            }
+                        }
+                    }
+                }
+                if votes >= n / 2 + 1 {
+                    println!("majority voted received: {} out of {}", votes, n);
+                    return;
+                }
             }
+            println!("only {} votes received: (need {})", votes, n);
         }
         "server" => match start_rpc_server(String::from(&args[2])).await {
             Err(e) => println!("error starting server: {}", e),
