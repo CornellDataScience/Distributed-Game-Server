@@ -3,7 +3,7 @@ use tonic::transport::Server;
 pub mod raft {
     tonic::include_proto!("raft");
 }
-use std::{env, net::SocketAddr};
+use std::{env, net::SocketAddr, time::Duration};
 mod node;
 
 async fn start_rpc_server(addr: String) -> Result<(), Box<dyn std::error::Error>> {
@@ -24,15 +24,15 @@ async fn start_rpc_server(addr: String) -> Result<(), Box<dyn std::error::Error>
 
 async fn connect_to(addr: String) -> Result<(), Box<dyn std::error::Error>> {
     let mut follower = RaftClient::connect(addr).await?;
-    let req = VoteRequest {
+    let mut req = tonic::Request::new(VoteRequest {
         candidate_id: String::from("abc"),
         term: 1,
         last_log_index: None,
         last_log_term: 0,
-    };
-    println!("sending vote request to follower:");
-    dbg!(req.clone());
-    match follower.request_vote(tonic::Request::new(req)).await {
+    });
+    req.set_timeout(Duration::from_secs(3600));
+    println!("sending vote request to follower...");
+    match follower.request_vote(req).await {
         Err(e) => println!("unexpected error: {}", e),
         Ok(res) => println!("vote granted = {}", res.into_inner().vote_granted),
     }
