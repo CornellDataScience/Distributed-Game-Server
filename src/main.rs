@@ -32,9 +32,18 @@ async fn connect_to(addr: String) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+async fn get_my_ip() {
+    if let Some(ip) = public_ip::addr().await {
+        println!("public ip address: {:?}", ip);
+    } else {
+        println!("couldn't get an IP address");
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = env::args().collect();
+
     if args.len() < 3 {
         println!("specify 'client' or 'server' role in command-line argument");
         return ();
