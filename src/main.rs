@@ -1,5 +1,5 @@
 use raft::{raft_client::RaftClient, VoteRequest};
-use tonic::transport::Server;
+use tonic::transport::{Channel, Server};
 pub mod raft {
     tonic::include_proto!("raft");
 }
@@ -22,8 +22,14 @@ async fn start_rpc_server(addr: String) -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
-async fn connect_to(addr: String) -> Result<(), Box<dyn std::error::Error>> {
-    let mut follower = RaftClient::connect(addr).await?;
+async fn connect_to(addr: String) -> Result<RaftClient<Channel>, Box<dyn std::error::Error>> {
+    let mut node = RaftClient::connect(addr).await?;
+    Ok(node)
+}
+
+async fn send_request_vote(
+    node: Result<RaftClient<Channel>, Box<dyn std::error::Error>>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let req = VoteRequest {
         candidate_id: String::from("abc"),
         term: 1,
@@ -32,7 +38,15 @@ async fn connect_to(addr: String) -> Result<(), Box<dyn std::error::Error>> {
     };
     println!("sending vote request to follower:");
     dbg!(req.clone());
-    match follower.request_vote(tonic::Request::new(req)).await {
+
+    let mut node = match node {
+        Ok(node) => node,
+        Err(e) => {
+            println!("unexpected error: {}", e);
+            return Err(e);
+        }
+    };
+    match node.request_vote(tonic::Request::new(req)).await {
         Err(e) => println!("unexpected error: {}", e),
         Ok(res) => println!("vote granted = {}", res.into_inner().vote_granted),
     }
@@ -50,16 +64,21 @@ async fn get_my_ip() {
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = env::args().collect();
+
     if args.len() < 3 {
         println!("usage: cargo run -- <client/server> <ip>");
         return ();
     }
+
     get_my_ip().await;
     match String::from(&args[1]).as_str() {
-        "client" => match connect_to(String::from(&args[2])).await {
-            Err(e) => println!("error starting client: {}", e),
-            _ => (),
-        },
+        "client" => {
+            let node = connect_to(String::from(&args[2])).await;
+            match send_request_vote(node).await {
+                Err(e) => println!("error starting server: {}", e),
+                _ => (),
+            }
+        }
         "server" => match start_rpc_server(String::from(&args[2])).await {
             Err(e) => println!("error starting server: {}", e),
             _ => (),
