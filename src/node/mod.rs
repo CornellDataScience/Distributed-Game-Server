@@ -14,6 +14,7 @@ pub mod raft {
     tonic::include_proto!("raft");
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Default, PartialEq)]
 enum State {
     #[default]
@@ -22,6 +23,7 @@ enum State {
     Leader,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Default)]
 pub struct Node {
     // volatile state

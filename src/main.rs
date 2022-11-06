@@ -3,14 +3,21 @@ use tonic::transport::Server;
 pub mod raft {
     tonic::include_proto!("raft");
 }
-use std::env;
+use std::{env, net::SocketAddr};
 mod node;
 
 async fn start_rpc_server(addr: String) -> Result<(), Box<dyn std::error::Error>> {
+    let socket_addr = match addr.parse::<SocketAddr>() {
+        Ok(a) => a,
+        Err(e) => {
+            println!("could not parse address {}", addr);
+            return Err(Box::new(e));
+        }
+    };
     println!("hosting raft RPC server at {}...", addr);
     Server::builder()
         .add_service(node::new_raft_server(addr.as_str(), Vec::new()))
-        .serve(addr.parse().unwrap())
+        .serve(socket_addr)
         .await?;
     Ok(())
 }
@@ -43,20 +50,19 @@ async fn get_my_ip() {
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = env::args().collect();
-
     if args.len() < 3 {
-        println!("specify 'client' or 'server' role in command-line argument");
+        println!("usage: cargo run -- <client/server> <ip>");
         return ();
     }
-    println!("{}", String::from(&args[2]));
-    return match String::from(&args[1]).as_str() {
+    get_my_ip().await;
+    match String::from(&args[1]).as_str() {
         "client" => match connect_to(String::from(&args[2])).await {
-            Err(e) => println!("error starting server: {}", e.to_string()),
-            Ok(_) => (),
+            Err(e) => println!("error starting client: {}", e),
+            _ => (),
         },
         "server" => match start_rpc_server(String::from(&args[2])).await {
-            Err(e) => println!("error starting server: {}", e.to_string()),
-            Ok(_) => (),
+            Err(e) => println!("error starting server: {}", e),
+            _ => (),
         },
         r => println!("unknown role {}", r),
     };
