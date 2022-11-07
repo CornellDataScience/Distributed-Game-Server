@@ -63,7 +63,6 @@ async fn main() {
     let args: Vec<String> = env::args().collect();
     let contents = fs::read_to_string("data/peers.txt").expect("cannot read file");
     let peers: Vec<&str> = contents.split(",").collect();
-    println!("{:?}", peers);
     let n = peers.len();
     if n == 0 {
         println!("please specify peers in data/peers.txt")
