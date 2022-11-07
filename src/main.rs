@@ -45,19 +45,6 @@ async fn send_request_vote(
     return node.request_vote(req).await;
 }
 
-async fn get_my_ip() {
-    if let Some(ip) = public_ip::addr().await {
-        println!("public ip address: {:?}", ip);
-    } else {
-        println!("couldn't get an IP address");
-    }
-}
-
-async fn get_local_ip() {
-    let my_local_ip = local_ip().unwrap();
-    println!("This is my local IP address: {:?}", my_local_ip);
-}
-
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = env::args().collect();
@@ -71,8 +58,7 @@ async fn main() {
         println!("usage: cargo run -- <client/server>");
         return ();
     }
-    get_my_ip().await;
-    get_local_ip().await;
+    let addr = local_ip().unwrap().to_string() + &String::from(":8080");
     match String::from(&args[1]).as_str() {
         "client" => {
             let mut votes = 0;
@@ -94,7 +80,7 @@ async fn main() {
             }
             println!("only {} votes received: (need {})", votes, n);
         }
-        "server" => match start_rpc_server(String::from("[::1]:8080")).await {
+        "server" => match start_rpc_server(addr).await {
             Err(e) => println!("error starting server: {}", e),
             _ => (),
         },
