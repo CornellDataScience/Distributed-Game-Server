@@ -3,6 +3,7 @@ use tonic::transport::{Channel, Server};
 pub mod raft {
     tonic::include_proto!("raft");
 }
+use local_ip_address::local_ip;
 use std::fs;
 use std::{env, net::SocketAddr, time::Duration};
 mod node;
@@ -52,6 +53,11 @@ async fn get_my_ip() {
     }
 }
 
+async fn get_local_ip() {
+    let my_local_ip = local_ip().unwrap();
+    println!("This is my local IP address: {:?}", my_local_ip);
+}
+
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = env::args().collect();
@@ -67,6 +73,7 @@ async fn main() {
         return ();
     }
     get_my_ip().await;
+    get_local_ip().await;
     match String::from(&args[1]).as_str() {
         "client" => {
             let mut votes = 0;
