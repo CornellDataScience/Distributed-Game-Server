@@ -3,6 +3,8 @@ use local_ip_address::local_ip;
 use raft::{node, rpc};
 use std::{env, fs, io, net::SocketAddr};
 use tokio::sync::mpsc;
+use crate::node::ServerConfig;
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() {
@@ -57,6 +59,11 @@ async fn main() {
             _ => continue,
         };
     }
-    let mut node = node::Node::new(server_addr, peers, rx);
+
+    let config = ServerConfig {
+        timeout: Duration::new(1, 0),
+    };
+
+    let mut node = node::Node::new(server_addr, peers, rx, config);
     node.start().await;
 }

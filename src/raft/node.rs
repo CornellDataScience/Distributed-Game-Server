@@ -4,6 +4,7 @@ use crate::raft::raft::{
 use std::cmp;
 use tokio::sync::{mpsc, oneshot};
 use tonic::{Request, Response, Status};
+use std::time::{Duration, Instant};
 
 #[derive(Debug)]
 pub enum Event {
@@ -26,6 +27,11 @@ enum State {
     Leader,
 }
 
+#[derive(Debug)]
+pub struct ServerConfig {
+    pub timeout: Duration,
+}
+
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct Node {
@@ -41,6 +47,8 @@ pub struct Node {
     current_term: u64,
     voted_for: Option<String>,
     log: Vec<LogEntry>,
+    next_timeout: Option<Instant>,
+    config: ServerConfig,
 
     // volatile leader state
     next_index: Vec<u64>,
@@ -52,7 +60,7 @@ pub struct Node {
 
 #[allow(dead_code)]
 impl Node {
-    pub fn new(id: String, peers: Vec<String>, mailbox: mpsc::UnboundedReceiver<Event>) -> Self {
+    pub fn new(id: String, peers: Vec<String>, mailbox: mpsc::UnboundedReceiver<Event>, config: ServerConfig) -> Self {
         Self {
             id: id,
             state: State::Follower,
@@ -64,6 +72,8 @@ impl Node {
             match_index: Vec::new(),
             current_term: 1,
             voted_for: None,
+            next_timeout: None,
+            config: config,
             log: Vec::new(),
             mailbox: mailbox,
         }
@@ -83,6 +93,17 @@ impl Node {
                     _ => (),
                 }
             }
+        }
+    }
+
+    pub fn refresh_timeout(self: &mut Self) {
+        self.next_timeout = Some(Instant::now() + self.config.timeout);
+    }
+
+    pub fn timed_out(self: &mut Self) -> bool {
+        match self.next_timeout {
+            Some(t) => Instant::now() > t,
+            None => false,
         }
     }
 
@@ -195,7 +216,7 @@ impl Node {
         if req.term < self.current_term {
             return self.respond_to_ae(false);
         }
-        // TODO: reset election timeout here
+        self.refresh_timeout();
         if req.term > self.current_term {
             self.state = State::Follower;
             self.current_term = req.term;
