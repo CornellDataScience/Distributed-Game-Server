@@ -10,10 +10,13 @@ async fn main() {
 
     // run servers from localhost at some port (default 8080)
     let mut port = String::from(":8080");
-    if args.len() == 2 {
+    if args.len() >= 2 {
         port = ":".to_string() + &String::from(&args[1]);
     }
-    let server_addr = local_ip().unwrap().to_string() + &port;
+    let mut server_addr = local_ip().unwrap().to_string() + &port;
+    if args.len() == 3 && args[2] == "localhost" {
+        server_addr = String::from("[::1]") + &port;
+    }
     let socket = match server_addr.parse::<SocketAddr>() {
         Err(e) => {
             println!("could not parse IP {server_addr}: {e}");
