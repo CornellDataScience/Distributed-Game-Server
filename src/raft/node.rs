@@ -1,9 +1,14 @@
 use crate::raft::raft::{
-    AppendEntriesRequest, AppendEntriesResponse, LogEntry, VoteRequest, VoteResponse,
+    AppendEntriesRequest, AppendEntriesResponse, Command, GetRequest, GetResponse, LogEntry,
+    PutRequest, PutResponse, VoteRequest, VoteResponse,
 };
+use core::panic;
+use futures::executor::block_on;
 use std::cmp;
 use tokio::sync::{mpsc, oneshot};
 use tonic::{Request, Response, Status};
+
+use super::raft::raft_client::RaftClient;
 
 #[derive(Debug)]
 pub enum Event {
@@ -14,6 +19,14 @@ pub enum Event {
     AppendEntries {
         req: AppendEntriesRequest,
         tx: oneshot::Sender<Result<Response<AppendEntriesResponse>, Status>>,
+    },
+    ClientPutRequest {
+        req: PutRequest,
+        tx: oneshot::Sender<Result<Response<PutResponse>, Status>>,
+    },
+    ClientGetRequest {
+        req: GetRequest,
+        tx: oneshot::Sender<Result<Response<GetResponse>, Status>>,
     },
 }
 
@@ -69,6 +82,27 @@ impl Node {
         }
     }
 
+    fn replicate(&mut self, command: Command) -> Result<Response<PutResponse>, Status> {
+        self.log.push(LogEntry {
+            command: Some(command),
+            term: self.current_term,
+        });
+        // Once a leader has been elected, it begins servicing
+        // client requests. Each client request contains a command to
+        // be executed by the replicated state machines. The leader
+        // appends the command to its log as a new entry, then issues
+        // AppendEntries RPCs in parallel to each of the other
+        // servers to replicate the entry. When the entry has been
+        // safely replicated (as described below), the leader applies
+        // the entry to its state machine and returns the result of that
+        // execution to the client.
+
+        // A log entry is committed once the leader
+        // that created the entry has replicated it on a majority of
+        // the servers (e.g., entry 7 in Figure 6)
+        Err(Status::unimplemented("not implemented"))
+    }
+
     fn handle_event(&mut self, event: Event) {
         match event {
             Event::RequestVote { req, tx } => {
@@ -77,11 +111,33 @@ impl Node {
                     _ => (),
                 }
             }
-            Event::AppendEntries { req, tx } => {
-                match tx.send(self.append_entries(tonic::Request::new(req))) {
-                    Err(e) => println!("{:?}", e),
-                    _ => (),
+            Event::AppendEntries { req, tx } => tx
+                .send(self.append_entries(tonic::Request::new(req)))
+                .unwrap_or_else(|e| println!("{:?}", e)),
+            Event::ClientGetRequest { req: _, tx: _ } => (),
+            Event::ClientPutRequest { req, tx } => {
+                if self.state != State::Leader {
+                    match &self.voted_for {
+                        None => tx
+                            .send(Err(Status::unavailable("leader is not available")))
+                            .unwrap_or_else(|e| println!("{:?}", e)),
+                        Some(leader) => match block_on(RaftClient::connect(leader.clone())) {
+                            Err(_) => tx
+                                .send(Err(Status::unavailable("leader is not available")))
+                                .unwrap_or_else(|e| println!("{:?}", e)),
+                            Ok(mut c) => tx
+                                .send(block_on(c.put(req)))
+                                .unwrap_or_else(|e| println!("{:?}", e)),
+                        },
+                    }
+                    return;
                 }
+                let command = Command {
+                    key: req.key,
+                    value: req.value,
+                };
+                tx.send(self.replicate(command))
+                    .unwrap_or_else(|e| println!("{:?}", e))
             }
         }
     }
@@ -104,7 +160,7 @@ impl Node {
         //  1. Start election timer
         //  2. For each peer, establish connection, send RequestVoteRPC
         //       If peer is unreachable, treat it as a 'no' vote
-        //  3. If majority of votes received, change state to 
+        //  3. If majority of votes received, change state to
         //  4. leader and return from function
 
         println!("starting candidate");
@@ -226,10 +282,12 @@ impl Node {
             }
             self.log.push(req.entries[j].clone());
         }
+
         if req.leader_commit > self.commit_index {
             // not sure if this is correct
             self.commit_index = cmp::min(req.leader_commit, (self.log.len() - 1) as u64);
         }
+
         return self.respond_to_ae(true);
     }
 }
