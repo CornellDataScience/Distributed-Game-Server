@@ -2,10 +2,11 @@
 
 An implementation of the Raft Consensus algorithm for the Cornell Data Science Distributed Game Server project.
 
-## Run Client/Server
+## Run Raft Node
 
-- To run a Raft RPC server, run `cargo run -- server` from any directory.
-- Then, to run a Raft RPC client, run `cargo run -- client` from any directory.
+- First, declare the list of peer IP addresses in data/peers.txt, one on each line.
+- To run a Raft node at a certain port, run `cargo run <port>` from any directory.
+- Type 'start' when prompted to start up the node and connect to its peers.
 
 ## Tests
 
