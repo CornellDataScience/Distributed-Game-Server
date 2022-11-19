@@ -112,6 +112,10 @@ impl Node {
         // change state to candidate and return from function.
         println!("starting follower");
         loop {
+            if self.timed_out() {
+                self.state = State::Candidate;
+                break;
+            }
             tokio::select! {
                 Some(event) = self.mailbox.recv() => {
                     self.handle_event(event)
