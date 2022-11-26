@@ -1,7 +1,9 @@
 use crate::raft::raft::{
-    AppendEntriesRequest, AppendEntriesResponse, LogEntry, VoteRequest, VoteResponse,
+    raft_client::RaftClient, AppendEntriesRequest, AppendEntriesResponse, LogEntry, VoteRequest,
+    VoteResponse,
 };
-use std::cmp;
+use futures::future::select_ok;
+use std::{borrow::BorrowMut, cmp};
 use tokio::sync::{mpsc, oneshot};
 use tonic::{Request, Response, Status};
 use crate::raft::log::Log;
@@ -101,9 +103,80 @@ impl Node {
                     Err(e) => println!("{:?}", e),
                     _ => (),
                 }
-            }
+            } /*
+              Event::Put {
+                  req, tx
+              }
+              => {
+                  // tx here should be used to send the response back to the RPC
+                  // Server
+                  // here, leader wants to
+                  match tx.send(self.broadcast_AE)
+              }
+               */
         }
     }
+
+    // TODO: Not compiling
+    pub async fn send_req_votes_conc(&mut self) {
+        // send a request vote RPC to every peer in the network in parallel
+        let p = self.peers.clone();
+
+        for i in p {
+            let cand_id = self.id.clone();
+            let curr_term = self.current_term;
+            // construct message
+            let request = tonic::Request::new(VoteRequest {
+                term: *curr_term,
+                candidate_id: cand_id,
+                last_log_index: Some(1), //index of candidate’s last log entry
+                last_log_term: 1,
+            }); //term of candidate’s last log LogEntry
+
+            tokio::spawn(async move {
+                // connect and send requests in parallel
+                let mut connection = RaftClient::connect(String::from(i)).await.unwrap();
+                let response = connection.request_vote(request).await.unwrap();
+                // process
+
+                // if term < response term, become a follower and reset votes to 0
+                // otherwise,
+                // if vote_granted increment votes.
+                match response.into_inner() {
+                    vr => {
+                        if vr.term > self.current_term {
+                            // do this atomically
+                            self.state = State::Follower
+                        }
+                        Ok(())
+                    }
+                    _ => Err(()),
+                }
+            });
+        }
+    }
+
+    // async fn broadcast_AE(self) {
+    //     // try to connect to clients (this should only happen once)
+    //     // this is still kinda synchronous
+    //     let clients = self.peers.iter()
+    //     .map(|peer| RaftClient::connect(String::from(peer)));
+
+    //     let connections =
+
+    //     for client in clients {
+    //         client.await;
+    //     }
+    //     // let rpc_params =
+    //     // does the request look the same for all of them?
+    //     // let request = gen_request(rpc_params)
+    //     let responses = clients.map(|client| send_AE(client))
+
+    //     // loop
+    //     let (res, remaining) = select_ok(responses).await.unwrap();
+    //     responses = remaining
+    //     // process the response
+    // }
 
     async fn start_follower(&mut self) {
         // TODO: implement follower loop: if timer runs out,
@@ -123,7 +196,7 @@ impl Node {
         //  1. Start election timer
         //  2. For each peer, establish connection, send RequestVoteRPC
         //       If peer is unreachable, treat it as a 'no' vote
-        //  3. If majority of votes received, change state to 
+        //  3. If majority of votes received, change state to
         //  4. leader and return from function
 
         println!("starting candidate");
