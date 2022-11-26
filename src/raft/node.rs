@@ -1,6 +1,7 @@
 use crate::raft::raft::{
     AppendEntriesRequest, AppendEntriesResponse, LogEntry, VoteRequest, VoteResponse,
 };
+use futures::{future::select_ok, FutureExt};
 use std::cmp;
 use tokio::sync::{mpsc, oneshot};
 use tonic::{Request, Response, Status};
@@ -107,6 +108,21 @@ impl Node {
         //  3. If majority of votes received, change state to 
         //  4. leader and return from function
 
+        let future_req = (0..self.peers.len())
+            .into_iter()
+            .map(|i| {
+                let peer_addr = self.peers[i];
+                let mut follower = RaftClient::connect(peer_addr).await?;
+                let mut tonic::Request::new(VoteRequest {
+                    //fields
+                });
+                match follower.request_vote(req).await {
+                    Err(e) => 0;
+                    Ok(res) => 1;
+                }
+            })
+            .collect::<Vec<_>>();
+        let (response, mut remaining_fut) = select_ok(future_req).await.unwrap();
         println!("starting candidate");
         loop {
             tokio::select! {
