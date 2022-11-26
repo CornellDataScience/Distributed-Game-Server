@@ -35,7 +35,7 @@ pub struct Log {
     next_index: u32,
     match_index: u32,
 }
-
+/* 
 impl Log {
     
     pub fn new(path: String) -> Self {
@@ -114,3 +114,4 @@ impl Log {
         }
     }
 }
+*/

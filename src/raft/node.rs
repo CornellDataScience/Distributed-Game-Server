@@ -122,37 +122,41 @@ impl Node {
         // send a request vote RPC to every peer in the network in parallel
         let p = self.peers.clone();
 
+        let cand_id = self.id.clone();
+        let curr_term = self.current_term.clone();
+
         for i in p {
-            let cand_id = self.id.clone();
-            let curr_term = self.current_term;
+            let cand_id = cand_id.clone();
+            let curr_term = curr_term.clone();
             // construct message
             let request = tonic::Request::new(VoteRequest {
-                term: *curr_term,
+                term: curr_term,
                 candidate_id: cand_id,
                 last_log_index: Some(1), //index of candidate’s last log entry
                 last_log_term: 1,
             }); //term of candidate’s last log LogEntry
 
+            let mut connection = RaftClient::connect(String::from(i)).await.unwrap();
+            let response = connection.request_vote(request).await.unwrap();
+            // process
+
+            // if term < response term, become a follower and reset votes to 0
+            // otherwise,
+            // if vote_granted increment votes.
+            match response.into_inner() {
+                vr => {
+                    if vr.term > curr_term {
+                        // do this atomically
+                        self.state = State::Follower;
+                    }
+                }
+            }
+            /* 
             tokio::spawn(async move {
                 // connect and send requests in parallel
-                let mut connection = RaftClient::connect(String::from(i)).await.unwrap();
-                let response = connection.request_vote(request).await.unwrap();
-                // process
 
-                // if term < response term, become a follower and reset votes to 0
-                // otherwise,
-                // if vote_granted increment votes.
-                match response.into_inner() {
-                    vr => {
-                        if vr.term > self.current_term {
-                            // do this atomically
-                            self.state = State::Follower
-                        }
-                        Ok(())
-                    }
-                    _ => Err(()),
-                }
             });
+            */
         }
     }
 
