@@ -4,6 +4,25 @@ use crate::raft::raft::{
 use std::cmp;
 use tokio::sync::{mpsc, oneshot};
 use tonic::{Request, Response, Status};
+use crate::raft::log::Log;
+use std::{fs::{self, File}, io::Write};
+
+
+//use super::log::write_LogEntry;
+
+//Write to log entries into persistent storage
+pub fn write_LogEntry(path: &str, cache: Vec<LogEntry>) {
+    let serialized = serde_json::to_string(&cache).unwrap();
+    
+    let mut new_path: String = "data/".to_owned();
+    
+    new_path.push_str(path);
+
+    let mut file = File::create(new_path)
+        .expect("Error encountered while creating file!");
+    file.write_all(&serialized.as_bytes())
+        .expect("Unable to write file");
+}
 
 #[derive(Debug)]
 pub enum Event {
@@ -230,6 +249,9 @@ impl Node {
             // not sure if this is correct
             self.commit_index = cmp::min(req.leader_commit, (self.log.len() - 1) as u64);
         }
+
+        write_LogEntry(&self.id.clone(), self.log.clone());
+
         return self.respond_to_ae(true);
     }
 }
