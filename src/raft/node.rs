@@ -1,27 +1,28 @@
+use crate::raft::log::Log;
 use crate::raft::raft::{
     raft_client::RaftClient, AppendEntriesRequest, AppendEntriesResponse, LogEntry, VoteRequest,
     VoteResponse,
 };
 use futures::future::select_ok;
 use std::{borrow::BorrowMut, cmp};
+use std::{
+    fs::{self, File},
+    io::Write,
+};
 use tokio::sync::{mpsc, oneshot};
 use tonic::{Request, Response, Status};
-use crate::raft::log::Log;
-use std::{fs::{self, File}, io::Write};
-
 
 //use super::log::write_LogEntry;
 
 //Write to log entries into persistent storage
 pub fn write_LogEntry(path: &str, cache: Vec<LogEntry>) {
     let serialized = serde_json::to_string(&cache).unwrap();
-    
+
     let mut new_path: String = "data/".to_owned();
-    
+
     new_path.push_str(path);
 
-    let mut file = File::create(new_path)
-        .expect("Error encountered while creating file!");
+    let mut file = File::create(new_path).expect("Error encountered while creating file!");
     file.write_all(&serialized.as_bytes())
         .expect("Unable to write file");
 }
@@ -124,6 +125,8 @@ impl Node {
 
         let cand_id = self.id.clone();
         let curr_term = self.current_term.clone();
+        let mut votes = 1; // need to handle how it votes for itself
+        let maj = self.peers.len() / 2;
 
         for i in p {
             let cand_id = cand_id.clone();
@@ -140,7 +143,7 @@ impl Node {
             let response = connection.request_vote(request).await.unwrap();
             // process
 
-            // if term < response term, become a follower and reset votes to 0
+            // if term < response term, become a follower and return
             // otherwise,
             // if vote_granted increment votes.
             match response.into_inner() {
@@ -148,15 +151,16 @@ impl Node {
                     if vr.term > curr_term {
                         // do this atomically
                         self.state = State::Follower;
+                        return;
+                    } else if vr.vote_granted {
+                        votes += 1;
+                    }
+                    if votes > maj {
+                        self.state = State::Leader;
+                        return;
                     }
                 }
             }
-            /* 
-            tokio::spawn(async move {
-                // connect and send requests in parallel
-
-            });
-            */
         }
     }
 
@@ -602,5 +606,20 @@ mod tests {
         ]);
         assert_eq!(follower.log, expected_log);
         assert_eq!(follower.voted_for, Some(leader_id));
+    }
+
+    #[test]
+    fn test_send_vote_req() {
+        let mut candidate = new_node();
+        // timeout so node becomes candidate
+
+        // make a follower
+        let mut follower = new_node();
+
+        // send out vote requests
+        // candidate.send_req_votes_conc().await;
+
+        // check transitioned to Follower if higher cand term
+        // or transitioned to leader if majority vote
     }
 }
