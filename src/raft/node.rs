@@ -118,15 +118,17 @@ impl Node {
         }
     }
 
-    // TODO: Not compiling
+    // TODO: Need to test
     pub async fn send_req_votes_conc(&mut self) {
         // send a request vote RPC to every peer in the network in parallel
         let p = self.peers.clone();
 
         let cand_id = self.id.clone();
         let curr_term = self.current_term.clone();
-        let mut votes = 1; // need to handle how it votes for itself
+        let mut votes = 1; // TODO: need to handle how it votes for itself
         let maj = self.peers.len() / 2;
+
+        // TODO: restart the election if election timeout exceeded
 
         for i in p {
             let cand_id = cand_id.clone();
@@ -344,6 +346,16 @@ mod tests {
     fn new_node() -> Node {
         let (_, rx) = mpsc::unbounded_channel();
         return Node::new(String::from("abc"), vec![], rx);
+    }
+
+    fn new_node_in_cluster(node_id: &String, peers: Vec<&String>) -> Node {
+        let (_, rx) = mpsc::unbounded_channel();
+        let ip = "[::1]".to_owned() + &node_id;
+        let peers = peers
+            .iter()
+            .map(|peer| String::from("[::1]".to_owned() + peer))
+            .collect();
+        return Node::new(String::from(ip), peers, rx);
     }
 
     fn test_request_vote(receiver: &mut Node, req: VoteRequest, expected: VoteResponse) {
@@ -608,18 +620,30 @@ mod tests {
         assert_eq!(follower.voted_for, Some(leader_id));
     }
 
-    #[test]
-    fn test_send_vote_req() {
-        let mut candidate = new_node();
+    #[tokio::test]
+    async fn test_send_vote_req() {
+        let c_id = "8080".to_string();
+        let f_id1 = "8081".to_string();
+        let f_id2 = "8082".to_string();
+
+        let mut candidate = new_node_in_cluster(&c_id, vec![&f_id1, &f_id2]);
         // timeout so node becomes candidate
 
         // make a follower
-        let mut follower = new_node();
+        let mut follower1 = new_node_in_cluster(&f_id1, vec![&c_id, &f_id2]);
 
         // send out vote requests
-        // candidate.send_req_votes_conc().await;
+        candidate.send_req_votes_conc().await;
 
-        // check transitioned to Follower if higher cand term
+        // check transitioned to Follower if higher term
+        assert_eq!(candidate.state, State::Follower);
+
+        let mut follower2 = new_node_in_cluster(&f_id2, vec![&c_id, &f_id1]);
         // or transitioned to leader if majority vote
+        assert_eq!(candidate.state, State::Leader);
+
+        // transitioned to follower if not majority vote (someone else became leader)
+
+        // if network partition, lost election so become a follower
     }
 }
