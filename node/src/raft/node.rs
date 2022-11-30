@@ -147,7 +147,16 @@ impl Node {
                 (Ok(Ok(res)), _, remaining) => {
                     let r = res.into_inner();
                     if r.success {
-                        num_successes += 1
+                        num_successes += 1;
+                        if num_successes >= self.peers.len() / 2 + 1 {
+                            return tx
+                                .send(Ok(Response::new(GetResponse {
+                                    value: *self.state_machine.get(&req.key).unwrap_or(&0),
+                                    success: true,
+                                    leader_id: Some(self.id.clone()),
+                                })))
+                                .unwrap_or_else(|e| println!("{:?}", e));
+                        }
                     } else if r.term > self.current_term {
                         self.current_term = r.term;
                         self.state = State::Follower;
@@ -163,15 +172,6 @@ impl Node {
                     responses = remaining
                 }
                 (_, _, remaining) => responses = remaining,
-            }
-            if num_successes >= self.peers.len() / 2 + 1 {
-                return tx
-                    .send(Ok(Response::new(GetResponse {
-                        value: *self.state_machine.get(&req.key).unwrap_or(&0),
-                        success: true,
-                        leader_id: Some(self.id.clone()),
-                    })))
-                    .unwrap_or_else(|e| println!("{:?}", e));
             }
         }
         return tx
