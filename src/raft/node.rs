@@ -2,9 +2,13 @@ use crate::raft::raft::{
     AppendEntriesRequest, AppendEntriesResponse, Command, GetRequest, GetResponse, LogEntry,
     PutRequest, PutResponse, VoteRequest, VoteResponse,
 };
-use core::panic;
-use futures::executor::block_on;
+use core::{num, panic};
+use futures::{
+    executor::block_on,
+    future::{select_all, select_ok},
+};
 use std::cmp;
+use std::collections::HashMap;
 use tokio::sync::{mpsc, oneshot};
 use tonic::{Request, Response, Status};
 
@@ -48,7 +52,7 @@ pub struct Node {
     commit_index: u64,
     last_applied: u64,
     peers: Vec<String>,
-    state_machine: std::collections::HashMap<String, i64>,
+    state_machine: HashMap<String, i64>,
 
     // persistent state
     current_term: u64,
@@ -56,8 +60,8 @@ pub struct Node {
     log: Vec<LogEntry>,
 
     // volatile leader state
-    next_index: Vec<u64>,
-    match_index: Vec<u64>,
+    next_index: HashMap<String, u64>,
+    match_index: HashMap<String, u64>,
 
     // to receive messages from client or RPC server
     mailbox: mpsc::UnboundedReceiver<Event>,
@@ -72,9 +76,9 @@ impl Node {
             commit_index: 0,
             last_applied: 0,
             peers: peers,
-            state_machine: std::collections::HashMap::new(),
-            next_index: Vec::new(),
-            match_index: Vec::new(),
+            state_machine: HashMap::new(),
+            next_index: HashMap::new(),
+            match_index: HashMap::new(),
             current_term: 1,
             voted_for: None,
             log: Vec::new(),
@@ -103,7 +107,85 @@ impl Node {
         Err(Status::unimplemented("not implemented"))
     }
 
-    fn handle_event(&mut self, event: Event) {
+    async fn handle_get_request(
+        &mut self,
+        req: GetRequest,
+        tx: oneshot::Sender<Result<Response<GetResponse>, Status>>,
+    ) {
+        if self.state != State::Leader {
+            // if node is not the leader, respond with success = false and
+            // indicate which leader the client should send the request to.
+            tx.send(Ok(Response::new(GetResponse {
+                value: 0,
+                success: false,
+                leader_id: self.voted_for.clone(),
+            })))
+            .unwrap_or_else(|e| println!("{:?}", e));
+            return;
+        }
+        // exchange heartbeats with majority of cluster
+        let (prev_log_index, prev_log_term) = match self.next_index.get("a") {
+            None => (None, 0),
+            Some(a) => (Some(*a), self.log[*a as usize].term),
+        };
+        let mut responses = Vec::new();
+        for peer in &self.peers {
+            let mut client = RaftClient::connect(peer.clone()).await.unwrap();
+            let request = Request::new(AppendEntriesRequest {
+                term: self.current_term,
+                leader_id: self.id.clone(),
+                entries: Vec::new(),
+                leader_commit: self.commit_index,
+                prev_log_index: prev_log_index,
+                prev_log_term: prev_log_term,
+            });
+            responses.push(tokio::spawn(
+                async move { client.append_entries(request).await },
+            ));
+        }
+        let mut num_successes = 0;
+        while !responses.is_empty() {
+            match select_all(responses).await {
+                (Ok(Ok(res)), _, remaining) => {
+                    let r = res.into_inner();
+                    if r.success {
+                        num_successes += 1
+                    } else if r.term > self.current_term {
+                        self.current_term = r.term;
+                        self.state = State::Follower;
+                        self.voted_for = None;
+                        return tx
+                            .send(Ok(Response::new(GetResponse {
+                                value: 0,
+                                success: false,
+                                leader_id: Some(self.id.clone()),
+                            })))
+                            .unwrap_or_else(|e| println!("{:?}", e));
+                    }
+                    responses = remaining
+                }
+                (_, _, remaining) => responses = remaining,
+            }
+            if num_successes > self.peers.len() / 2 + 1 {
+                return tx
+                    .send(Ok(Response::new(GetResponse {
+                        value: self.state_machine[&req.key],
+                        success: true,
+                        leader_id: Some(self.id.clone()),
+                    })))
+                    .unwrap_or_else(|e| println!("{:?}", e));
+            }
+        }
+        return tx
+            .send(Ok(Response::new(GetResponse {
+                value: 0,
+                success: false,
+                leader_id: Some(self.id.clone()),
+            })))
+            .unwrap_or_else(|e| println!("{:?}", e));
+    }
+
+    async fn handle_event(&mut self, event: Event) {
         match event {
             Event::RequestVote { req, tx } => {
                 match tx.send(self.request_vote(tonic::Request::new(req))) {
@@ -114,22 +196,14 @@ impl Node {
             Event::AppendEntries { req, tx } => tx
                 .send(self.append_entries(tonic::Request::new(req)))
                 .unwrap_or_else(|e| println!("{:?}", e)),
-            Event::ClientGetRequest { req: _, tx: _ } => (),
+            Event::ClientGetRequest { req, tx } => return self.handle_get_request(req, tx).await,
             Event::ClientPutRequest { req, tx } => {
                 if self.state != State::Leader {
-                    match &self.voted_for {
-                        None => tx
-                            .send(Err(Status::unavailable("leader is not available")))
-                            .unwrap_or_else(|e| println!("{:?}", e)),
-                        Some(leader) => match block_on(RaftClient::connect(leader.clone())) {
-                            Err(_) => tx
-                                .send(Err(Status::unavailable("leader is not available")))
-                                .unwrap_or_else(|e| println!("{:?}", e)),
-                            Ok(mut c) => tx
-                                .send(block_on(c.put(req)))
-                                .unwrap_or_else(|e| println!("{:?}", e)),
-                        },
-                    }
+                    tx.send(Ok(Response::new(PutResponse {
+                        success: false,
+                        leader_id: self.voted_for.clone(),
+                    })))
+                    .unwrap_or_else(|e| println!("{:?}", e));
                     return;
                 }
                 let command = Command {
@@ -149,7 +223,7 @@ impl Node {
         loop {
             tokio::select! {
                 Some(event) = self.mailbox.recv() => {
-                    self.handle_event(event)
+                    self.handle_event(event).await
                 }
             }
         }
@@ -167,7 +241,7 @@ impl Node {
         loop {
             tokio::select! {
                 Some(event) = self.mailbox.recv() => {
-                    self.handle_event(event)
+                    self.handle_event(event).await
                 }
             }
         }
@@ -178,7 +252,7 @@ impl Node {
         loop {
             tokio::select! {
                 Some(event) = self.mailbox.recv() => {
-                    self.handle_event(event)
+                    self.handle_event(event).await
                 }
             }
         }

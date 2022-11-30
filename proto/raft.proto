@@ -14,16 +14,19 @@ message GetRequest {
 
 message GetResponse {
   int64 value = 1;
-  bool exists = 2;
+  bool success = 2;
+  optional string leader_id = 3;
 }
 
 message PutRequest {
   string key = 1;
   int64 value = 2;
+  int64 serial_number = 3;
 }
 
 message PutResponse {
   bool success = 1;
+  optional string leader_id = 2;
 }
 
 message VoteRequest {
