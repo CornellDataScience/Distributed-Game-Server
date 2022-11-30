@@ -69,7 +69,7 @@ impl Node {
     pub fn new(id: String, peers: Vec<String>, mailbox: mpsc::UnboundedReceiver<Event>) -> Self {
         Self {
             id: id,
-            state: State::Leader,
+            state: State::Follower,
             commit_index: 0,
             last_applied: 0,
             peers: peers,
@@ -88,6 +88,7 @@ impl Node {
             command: Some(command),
             term: self.current_term,
         });
+        println!("{} is replicating command", self.id);
         // Once a leader has been elected, it begins servicing
         // client requests. Each client request contains a command to
         // be executed by the replicated state machines. The leader
@@ -173,7 +174,6 @@ impl Node {
                     .unwrap_or_else(|e| println!("{:?}", e));
             }
         }
-        println!("failure");
         return tx
             .send(Ok(Response::new(GetResponse {
                 value: 0,
@@ -183,34 +183,37 @@ impl Node {
             .unwrap_or_else(|e| println!("{:?}", e));
     }
 
+    async fn handle_put_request(
+        &mut self,
+        req: PutRequest,
+        tx: oneshot::Sender<Result<Response<PutResponse>, Status>>,
+    ) {
+        if self.state != State::Leader {
+            tx.send(Ok(Response::new(PutResponse {
+                success: false,
+                leader_id: self.voted_for.clone(),
+            })))
+            .unwrap_or_else(|e| println!("{:?}", e));
+            return;
+        }
+        let command = Command {
+            key: req.key,
+            value: req.value,
+        };
+        tx.send(self.replicate(command))
+            .unwrap_or_else(|e| println!("{:?}", e))
+    }
+
     async fn handle_event(&mut self, event: Event) {
         match event {
-            Event::RequestVote { req, tx } => {
-                match tx.send(self.request_vote(tonic::Request::new(req))) {
-                    Err(e) => println!("{:?}", e),
-                    _ => (),
-                }
-            }
+            Event::RequestVote { req, tx } => tx
+                .send(self.request_vote(tonic::Request::new(req)))
+                .unwrap_or_else(|e| println!("{:?}", e)),
             Event::AppendEntries { req, tx } => tx
                 .send(self.append_entries(tonic::Request::new(req)))
                 .unwrap_or_else(|e| println!("{:?}", e)),
             Event::ClientGetRequest { req, tx } => return self.handle_get_request(req, tx).await,
-            Event::ClientPutRequest { req, tx } => {
-                if self.state != State::Leader {
-                    tx.send(Ok(Response::new(PutResponse {
-                        success: false,
-                        leader_id: self.voted_for.clone(),
-                    })))
-                    .unwrap_or_else(|e| println!("{:?}", e));
-                    return;
-                }
-                let command = Command {
-                    key: req.key,
-                    value: req.value,
-                };
-                tx.send(self.replicate(command))
-                    .unwrap_or_else(|e| println!("{:?}", e))
-            }
+            Event::ClientPutRequest { req, tx } => return self.handle_put_request(req, tx).await,
         }
     }
 
