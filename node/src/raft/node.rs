@@ -69,7 +69,7 @@ impl Node {
     pub fn new(id: String, peers: Vec<String>, mailbox: mpsc::UnboundedReceiver<Event>) -> Self {
         Self {
             id: id,
-            state: State::Follower,
+            state: State::Leader,
             commit_index: 0,
             last_applied: 0,
             peers: peers,
@@ -163,16 +163,17 @@ impl Node {
                 }
                 (_, _, remaining) => responses = remaining,
             }
-            if num_successes > self.peers.len() / 2 + 1 {
+            if num_successes >= self.peers.len() / 2 + 1 {
                 return tx
                     .send(Ok(Response::new(GetResponse {
-                        value: self.state_machine[&req.key],
+                        value: *self.state_machine.get(&req.key).unwrap_or(&0),
                         success: true,
                         leader_id: Some(self.id.clone()),
                     })))
                     .unwrap_or_else(|e| println!("{:?}", e));
             }
         }
+        println!("failure");
         return tx
             .send(Ok(Response::new(GetResponse {
                 value: 0,

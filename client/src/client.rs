@@ -9,7 +9,7 @@ pub mod raft {
 
 use raft::raft_client::RaftClient;
 
-use self::raft::GetRequest;
+use self::raft::{GetRequest, PutRequest};
 
 pub struct Client {
     peers: Vec<String>,
@@ -30,15 +30,19 @@ impl Client {
         };
     }
 
-    pub fn get(&mut self, key: String) -> i64 {
-        let dst_ip = match &self.current_leader {
+    fn find_leader(&mut self) -> RaftClient<Channel> {
+        let dst_ip = &match &self.current_leader {
             None => {
                 let n = rand::thread_rng().gen_range(0..self.peers.len());
-                &self.peers[n]
+                self.peers[n].clone()
             }
-            Some(l) => l,
+            Some(l) => String::from("http://") + l,
         };
-        let mut dst = self.connections.get(dst_ip).unwrap().clone();
+        return self.connections.get(dst_ip).unwrap().clone();
+    }
+
+    pub fn get(&mut self, key: String) -> i64 {
+        let mut dst = self.find_leader();
         let req = GetRequest { key: key.clone() };
         match block_on(dst.get(req)) {
             Ok(res) => {
@@ -51,5 +55,25 @@ impl Client {
             _ => (),
         }
         return self.get(key);
+    }
+
+    pub fn put(&mut self, key: String, value: i64) -> bool {
+        let mut dst = self.find_leader();
+        let req = PutRequest {
+            key: key.clone(),
+            value: value,
+            serial_number: 0,
+        };
+        match block_on(dst.put(req)) {
+            Ok(res) => {
+                let r = res.into_inner();
+                if r.success {
+                    return true;
+                }
+                self.current_leader = r.leader_id;
+            }
+            _ => (),
+        }
+        return self.put(key, value);
     }
 }

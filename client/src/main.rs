@@ -9,5 +9,7 @@ async fn main() {
         .map(|addr| String::from("http://") + &String::from(addr))
         .collect();
     let mut c = Client::new(peers);
-    println!("{}", c.get(String::from("key")));
+    let key = String::from("key");
+    c.put(key.clone(), 1);
+    println!("{}", c.get(key.clone()));
 }
