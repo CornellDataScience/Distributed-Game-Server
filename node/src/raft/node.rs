@@ -5,6 +5,7 @@ use crate::raft::raft::{
 use core::panic;
 use futures::future::select_all;
 use std::cmp;
+use std::time::{Duration, Instant};
 use std::collections::HashMap;
 use tokio::sync::{mpsc, oneshot};
 use tonic::{Request, Response, Status};
@@ -41,6 +42,11 @@ enum State {
     Leader,
 }
 
+#[derive(Debug)]
+pub struct ServerConfig {
+    pub timeout: Duration,
+}
+
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct Node {
@@ -56,6 +62,8 @@ pub struct Node {
     current_term: u64,
     voted_for: Option<String>,
     log: Vec<LogEntry>,
+    next_timeout: Option<Instant>,
+    config: ServerConfig,
 
     // volatile leader state
     next_index: HashMap<String, u64>,
@@ -82,6 +90,10 @@ impl Node {
             match_index: HashMap::new(),
             current_term: 1,
             voted_for: None,
+            next_timeout: None,
+            config: ServerConfig {
+                timeout: Duration::new(1, 0),
+            },
             log: Vec::new(),
             mailbox: mailbox,
             connections: HashMap::new(),
@@ -222,21 +234,45 @@ impl Node {
         }
     }
 
+    pub fn refresh_timeout(self: &mut Self) {
+        self.next_timeout = Some(Instant::now() + self.config.timeout);
+    }
+
+    pub fn timed_out(self: &mut Self) -> bool {
+        match self.next_timeout {
+            Some(t) => Instant::now() > t,
+            None => false,
+        }
+    }
+
     async fn start_follower(&mut self) {
         // TODO: implement follower loop: if timer runs out,
         // change state to candidate and return from function.
         println!("starting follower");
+        self.next_timeout = Some(Instant::now());
         loop {
+            if self.timed_out() {
+                self.state = State::Candidate;
+                break;
+            }
             tokio::select! {
                 Some(event) = self.mailbox.recv() => {
                     self.handle_event(event).await
                 }
+                else => { () }
             }
         }
     }
 
     /// [start_candidate] starts a new node with candidate and sends RequestVoteRPCs to all peer nodes. Precondition: self.state == candidate
     async fn start_candidate(&mut self) {
+        // TODO: implement candidate loop:
+        //  1. Start election timer
+        //  2. For each peer, establish connection, send RequestVoteRPC
+        //       If peer is unreachable, treat it as a 'no' vote
+        //  3. If majority of votes received, change state to
+        //  4. leader and return from function
+
         println!("starting candidate");
         // Send RequestVote to all other servers 
         let mut responses = Vec::new();
@@ -375,7 +411,7 @@ impl Node {
         if req.term < self.current_term {
             return self.respond_to_ae(false);
         }
-        // TODO: reset election timeout here
+        self.refresh_timeout();
         if req.term > self.current_term {
             self.state = State::Follower;
             self.current_term = req.term;
@@ -418,6 +454,8 @@ impl Node {
 
 #[cfg(test)]
 mod tests {
+    use std::thread::sleep;
+
     use super::*;
 
     fn new_node() -> Node {
@@ -685,5 +723,11 @@ mod tests {
         ]);
         assert_eq!(follower.log, expected_log);
         assert_eq!(follower.voted_for, Some(leader_id));
+    }
+    #[tokio::test]
+    async fn test_follower() {
+        let mut f = new_node();
+        f.start_follower().await;
+        assert_eq!(f.state, State::Candidate);
     }
 }
