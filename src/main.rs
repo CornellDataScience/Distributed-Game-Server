@@ -64,6 +64,6 @@ async fn main() {
         timeout: Duration::new(1, 0),
     };
 
-    let mut node = node::Node::new(server_addr, peers, rx, config);
+    let mut node = node::Node::new(server_addr, peers, rx);
     node.start().await;
 }

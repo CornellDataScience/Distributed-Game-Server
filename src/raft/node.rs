@@ -2,9 +2,9 @@ use crate::raft::raft::{
     AppendEntriesRequest, AppendEntriesResponse, LogEntry, VoteRequest, VoteResponse,
 };
 use std::cmp;
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
 use tonic::{Request, Response, Status};
-use std::time::{Duration, Instant};
 
 #[derive(Debug)]
 pub enum Event {
@@ -60,7 +60,7 @@ pub struct Node {
 
 #[allow(dead_code)]
 impl Node {
-    pub fn new(id: String, peers: Vec<String>, mailbox: mpsc::UnboundedReceiver<Event>, config: ServerConfig) -> Self {
+    pub fn new(id: String, peers: Vec<String>, mailbox: mpsc::UnboundedReceiver<Event>) -> Self {
         Self {
             id: id,
             state: State::Follower,
@@ -73,7 +73,9 @@ impl Node {
             current_term: 1,
             voted_for: None,
             next_timeout: None,
-            config: config,
+            config: ServerConfig {
+                timeout: Duration::new(1, 0),
+            },
             log: Vec::new(),
             mailbox: mailbox,
         }
@@ -111,6 +113,7 @@ impl Node {
         // TODO: implement follower loop: if timer runs out,
         // change state to candidate and return from function.
         println!("starting follower");
+        self.next_timeout = Some(Instant::now());
         loop {
             if self.timed_out() {
                 self.state = State::Candidate;
@@ -120,6 +123,7 @@ impl Node {
                 Some(event) = self.mailbox.recv() => {
                     self.handle_event(event)
                 }
+                else => { () }
             }
         }
     }
@@ -129,7 +133,7 @@ impl Node {
         //  1. Start election timer
         //  2. For each peer, establish connection, send RequestVoteRPC
         //       If peer is unreachable, treat it as a 'no' vote
-        //  3. If majority of votes received, change state to 
+        //  3. If majority of votes received, change state to
         //  4. leader and return from function
 
         println!("starting candidate");
@@ -261,6 +265,8 @@ impl Node {
 
 #[cfg(test)]
 mod tests {
+    use std::thread::sleep;
+
     use super::*;
 
     fn new_node() -> Node {
@@ -528,5 +534,11 @@ mod tests {
         ]);
         assert_eq!(follower.log, expected_log);
         assert_eq!(follower.voted_for, Some(leader_id));
+    }
+    #[tokio::test]
+    async fn test_follower() {
+        let mut f = new_node();
+        f.start_follower().await;
+        assert_eq!(f.state, State::Candidate);
     }
 }
