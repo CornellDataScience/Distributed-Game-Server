@@ -8,7 +8,8 @@ use std::cmp;
 use std::collections::HashMap;
 use tokio::sync::{mpsc, oneshot};
 use tonic::{Request, Response, Status};
-
+use tonic::transport::Channel;
+use futures::executor::block_on;
 use super::raft::raft_client::RaftClient;
 
 #[derive(Debug)]
@@ -62,6 +63,9 @@ pub struct Node {
 
     // to receive messages from client or RPC server
     mailbox: mpsc::UnboundedReceiver<Event>,
+
+    //connections to peers 
+    connections: HashMap<String, RaftClient<Channel>>,
 }
 
 #[allow(dead_code)]
@@ -80,6 +84,7 @@ impl Node {
             voted_for: None,
             log: Vec::new(),
             mailbox: mailbox,
+            connections: HashMap::new(),
         }
     }
 
@@ -230,15 +235,52 @@ impl Node {
         }
     }
 
+    /// [start_candidate] starts a new node with candidate and sends RequestVoteRPCs to all peer nodes. Precondition: self.state == candidate
     async fn start_candidate(&mut self) {
-        // TODO: implement candidate loop:
-        //  1. Start election timer
-        //  2. For each peer, establish connection, send RequestVoteRPC
-        //       If peer is unreachable, treat it as a 'no' vote
-        //  3. If majority of votes received, change state to
-        //  4. leader and return from function
-
         println!("starting candidate");
+        // Send RequestVote to all other servers 
+        let mut responses = Vec::new();
+        for peer in &self.peers {
+            let mut client = RaftClient::connect(peer.clone()).await.unwrap();
+            let (last_log_idx, last_term) = match self.log.len() {
+                0 => (None, 0),
+                i => (Some (i as u64), self.log[i - 1].term)
+            };
+            let request = Request::new(VoteRequest {
+                term: self.current_term,
+                candidate_id: self.id.clone(),
+                last_log_index: last_log_idx, 
+                last_log_term: last_term,
+            });
+            responses.push(tokio::spawn(
+                async move { client.request_vote(request).await },
+            ));
+        }
+
+        // Check if the majority of the votes are received, change state 
+        let mut num_votes = 1;
+        while !responses.is_empty() {
+            match select_all(responses).await {
+                (Ok(Ok(res)), _, remaining) => {
+                    let r = res.into_inner();
+                    if r.vote_granted {
+                        num_votes += 1;
+                        if num_votes > (self.peers.len() + 1) / 2 {
+                            self.state = State::Leader; 
+                            return 
+                        }
+                    } else if r.term > self.current_term {
+                        self.current_term = r.term;
+                        self.state = State::Follower;
+                        self.voted_for = None;
+                        return
+                    }
+                    responses = remaining
+                }
+                (_, _, remaining) => responses = remaining,
+            }
+        }
+
         loop {
             tokio::select! {
                 Some(event) = self.mailbox.recv() => {
@@ -260,6 +302,12 @@ impl Node {
     }
 
     pub async fn start(&mut self) {
+        // Sets up connection to all peer nodes (panic if it can't find the connection - fix later :D)
+        let mut connections = HashMap::new();
+        self.peers.clone().into_iter().for_each(|ip| {
+            connections.insert(ip.clone(), block_on(RaftClient::connect(ip)).unwrap());
+        });
+        self.connections = connections;
         loop {
             match self.state {
                 State::Follower => self.start_follower().await,
@@ -318,6 +366,7 @@ impl Node {
         return self.respond_to_vote(true);
     }
 
+    // Function for when a server receives an append entries request
     pub fn append_entries(
         &mut self,
         request: Request<AppendEntriesRequest>,
