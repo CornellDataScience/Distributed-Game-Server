@@ -274,6 +274,8 @@ impl Node {
         //  4. leader and return from function
 
         println!("starting candidate");
+        // Increment term 
+        self.current_term += 1;
         // Send RequestVote to all other servers 
         let mut responses = Vec::new();
         for peer in &self.peers {
