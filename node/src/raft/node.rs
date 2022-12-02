@@ -1,10 +1,17 @@
 use crate::raft::raft::{
-    AppendEntriesRequest, AppendEntriesResponse, LogEntry, VoteRequest, VoteResponse,
+    AppendEntriesRequest, AppendEntriesResponse, Command, GetRequest, GetResponse, LogEntry,
+    PutRequest, PutResponse, VoteRequest, VoteResponse,
 };
+use core::panic;
+use futures::future::select_all;
 use std::cmp;
 use std::time::{Duration, Instant};
+use std::collections::HashMap;
 use tokio::sync::{mpsc, oneshot};
 use tonic::{Request, Response, Status};
+use tonic::transport::Channel;
+use futures::executor::block_on;
+use super::raft::raft_client::RaftClient;
 
 #[derive(Debug)]
 pub enum Event {
@@ -15,6 +22,14 @@ pub enum Event {
     AppendEntries {
         req: AppendEntriesRequest,
         tx: oneshot::Sender<Result<Response<AppendEntriesResponse>, Status>>,
+    },
+    ClientPutRequest {
+        req: PutRequest,
+        tx: oneshot::Sender<Result<Response<PutResponse>, Status>>,
+    },
+    ClientGetRequest {
+        req: GetRequest,
+        tx: oneshot::Sender<Result<Response<GetResponse>, Status>>,
     },
 }
 
@@ -41,7 +56,7 @@ pub struct Node {
     commit_index: u64,
     last_applied: u64,
     peers: Vec<String>,
-    state_machine: std::collections::HashMap<String, i64>,
+    state_machine: HashMap<String, i64>,
 
     // persistent state
     current_term: u64,
@@ -51,11 +66,14 @@ pub struct Node {
     config: ServerConfig,
 
     // volatile leader state
-    next_index: Vec<u64>,
-    match_index: Vec<u64>,
+    next_index: HashMap<String, u64>,
+    match_index: HashMap<String, u64>,
 
     // to receive messages from client or RPC server
     mailbox: mpsc::UnboundedReceiver<Event>,
+
+    //connections to peers 
+    connections: HashMap<String, RaftClient<Channel>>,
 }
 
 #[allow(dead_code)]
@@ -67,9 +85,9 @@ impl Node {
             commit_index: 0,
             last_applied: 0,
             peers: peers,
-            state_machine: std::collections::HashMap::new(),
-            next_index: Vec::new(),
-            match_index: Vec::new(),
+            state_machine: HashMap::new(),
+            next_index: HashMap::new(),
+            match_index: HashMap::new(),
             current_term: 1,
             voted_for: None,
             next_timeout: None,
@@ -78,23 +96,141 @@ impl Node {
             },
             log: Vec::new(),
             mailbox: mailbox,
+            connections: HashMap::new(),
         }
     }
 
-    fn handle_event(&mut self, event: Event) {
+    fn replicate(&mut self, command: Command) -> Result<Response<PutResponse>, Status> {
+        self.log.push(LogEntry {
+            command: Some(command),
+            term: self.current_term,
+        });
+        println!("{} is replicating command", self.id);
+        // Once a leader has been elected, it begins servicing
+        // client requests. Each client request contains a command to
+        // be executed by the replicated state machines. The leader
+        // appends the command to its log as a new entry, then issues
+        // AppendEntries RPCs in parallel to each of the other
+        // servers to replicate the entry. When the entry has been
+        // safely replicated (as described below), the leader applies
+        // the entry to its state machine and returns the result of that
+        // execution to the client.
+
+        // A log entry is committed once the leader
+        // that created the entry has replicated it on a majority of
+        // the servers (e.g., entry 7 in Figure 6)
+        Err(Status::unimplemented("not implemented"))
+    }
+
+    async fn handle_get_request(
+        &mut self,
+        req: GetRequest,
+        tx: oneshot::Sender<Result<Response<GetResponse>, Status>>,
+    ) {
+        if self.state != State::Leader {
+            // if node is not the leader, respond with success = false and
+            // indicate which leader the client should send the request to.
+            return tx
+                .send(Ok(Response::new(GetResponse {
+                    value: 0,
+                    success: false,
+                    leader_id: self.voted_for.clone(),
+                })))
+                .unwrap_or_else(|e| println!("{:?}", e));
+        }
+        // exchange heartbeats with majority of cluster
+        let (prev_log_index, prev_log_term) = match self.next_index.get("a") {
+            None => (None, 0),
+            Some(a) => (Some(*a), self.log[*a as usize].term),
+        };
+        let mut responses = Vec::new();
+        for peer in &self.peers {
+            let mut client = RaftClient::connect(peer.clone()).await.unwrap();
+            let request = Request::new(AppendEntriesRequest {
+                term: self.current_term,
+                leader_id: self.id.clone(),
+                entries: Vec::new(),
+                leader_commit: self.commit_index,
+                prev_log_index: prev_log_index,
+                prev_log_term: prev_log_term,
+            });
+            responses.push(tokio::spawn(
+                async move { client.append_entries(request).await },
+            ));
+        }
+        let mut num_successes = 0;
+        while !responses.is_empty() {
+            match select_all(responses).await {
+                (Ok(Ok(res)), _, remaining) => {
+                    let r = res.into_inner();
+                    if r.success {
+                        num_successes += 1;
+                        if num_successes >= self.peers.len() / 2 + 1 {
+                            return tx
+                                .send(Ok(Response::new(GetResponse {
+                                    value: *self.state_machine.get(&req.key).unwrap_or(&0),
+                                    success: true,
+                                    leader_id: Some(self.id.clone()),
+                                })))
+                                .unwrap_or_else(|e| println!("{:?}", e));
+                        }
+                    } else if r.term > self.current_term {
+                        self.current_term = r.term;
+                        self.state = State::Follower;
+                        self.voted_for = None;
+                        return tx
+                            .send(Ok(Response::new(GetResponse {
+                                value: 0,
+                                success: false,
+                                leader_id: Some(self.id.clone()),
+                            })))
+                            .unwrap_or_else(|e| println!("{:?}", e));
+                    }
+                    responses = remaining
+                }
+                (_, _, remaining) => responses = remaining,
+            }
+        }
+        return tx
+            .send(Ok(Response::new(GetResponse {
+                value: 0,
+                success: false,
+                leader_id: Some(self.id.clone()),
+            })))
+            .unwrap_or_else(|e| println!("{:?}", e));
+    }
+
+    async fn handle_put_request(
+        &mut self,
+        req: PutRequest,
+        tx: oneshot::Sender<Result<Response<PutResponse>, Status>>,
+    ) {
+        if self.state != State::Leader {
+            tx.send(Ok(Response::new(PutResponse {
+                success: false,
+                leader_id: self.voted_for.clone(),
+            })))
+            .unwrap_or_else(|e| println!("{:?}", e));
+            return;
+        }
+        let command = Command {
+            key: req.key,
+            value: req.value,
+        };
+        tx.send(self.replicate(command))
+            .unwrap_or_else(|e| println!("{:?}", e))
+    }
+
+    async fn handle_event(&mut self, event: Event) {
         match event {
-            Event::RequestVote { req, tx } => {
-                match tx.send(self.request_vote(tonic::Request::new(req))) {
-                    Err(e) => println!("{:?}", e),
-                    _ => (),
-                }
-            }
-            Event::AppendEntries { req, tx } => {
-                match tx.send(self.append_entries(tonic::Request::new(req))) {
-                    Err(e) => println!("{:?}", e),
-                    _ => (),
-                }
-            }
+            Event::RequestVote { req, tx } => tx
+                .send(self.request_vote(tonic::Request::new(req)))
+                .unwrap_or_else(|e| println!("{:?}", e)),
+            Event::AppendEntries { req, tx } => tx
+                .send(self.append_entries(tonic::Request::new(req)))
+                .unwrap_or_else(|e| println!("{:?}", e)),
+            Event::ClientGetRequest { req, tx } => return self.handle_get_request(req, tx).await,
+            Event::ClientPutRequest { req, tx } => return self.handle_put_request(req, tx).await,
         }
     }
 
@@ -121,13 +257,14 @@ impl Node {
             }
             tokio::select! {
                 Some(event) = self.mailbox.recv() => {
-                    self.handle_event(event)
+                    self.handle_event(event).await
                 }
                 else => { () }
             }
         }
     }
 
+    /// [start_candidate] starts a new node with candidate and sends RequestVoteRPCs to all peer nodes. Precondition: self.state == candidate
     async fn start_candidate(&mut self) {
         // TODO: implement candidate loop:
         //  1. Start election timer
@@ -137,10 +274,53 @@ impl Node {
         //  4. leader and return from function
 
         println!("starting candidate");
+        // Send RequestVote to all other servers 
+        let mut responses = Vec::new();
+        for peer in &self.peers {
+            let mut client = RaftClient::connect(peer.clone()).await.unwrap();
+            let (last_log_idx, last_term) = match self.log.len() {
+                0 => (None, 0),
+                i => (Some (i as u64), self.log[i - 1].term)
+            };
+            let request = Request::new(VoteRequest {
+                term: self.current_term,
+                candidate_id: self.id.clone(),
+                last_log_index: last_log_idx, 
+                last_log_term: last_term,
+            });
+            responses.push(tokio::spawn(
+                async move { client.request_vote(request).await },
+            ));
+        }
+
+        // Check if the majority of the votes are received, change state 
+        let mut num_votes = 1;
+        while !responses.is_empty() {
+            match select_all(responses).await {
+                (Ok(Ok(res)), _, remaining) => {
+                    let r = res.into_inner();
+                    if r.vote_granted {
+                        num_votes += 1;
+                        if num_votes > (self.peers.len() + 1) / 2 {
+                            self.state = State::Leader; 
+                            return 
+                        }
+                    } else if r.term > self.current_term {
+                        self.current_term = r.term;
+                        self.state = State::Follower;
+                        self.voted_for = None;
+                        return
+                    }
+                    responses = remaining
+                }
+                (_, _, remaining) => responses = remaining,
+            }
+        }
+
         loop {
             tokio::select! {
                 Some(event) = self.mailbox.recv() => {
-                    self.handle_event(event)
+                    self.handle_event(event).await
                 }
             }
         }
@@ -151,13 +331,19 @@ impl Node {
         loop {
             tokio::select! {
                 Some(event) = self.mailbox.recv() => {
-                    self.handle_event(event)
+                    self.handle_event(event).await
                 }
             }
         }
     }
 
     pub async fn start(&mut self) {
+        // Sets up connection to all peer nodes (panic if it can't find the connection - fix later :D)
+        let mut connections = HashMap::new();
+        self.peers.clone().into_iter().for_each(|ip| {
+            connections.insert(ip.clone(), block_on(RaftClient::connect(ip)).unwrap());
+        });
+        self.connections = connections;
         loop {
             match self.state {
                 State::Follower => self.start_follower().await,
@@ -216,6 +402,7 @@ impl Node {
         return self.respond_to_vote(true);
     }
 
+    // Function for when a server receives an append entries request
     pub fn append_entries(
         &mut self,
         request: Request<AppendEntriesRequest>,
@@ -255,10 +442,12 @@ impl Node {
             }
             self.log.push(req.entries[j].clone());
         }
+
         if req.leader_commit > self.commit_index {
             // not sure if this is correct
             self.commit_index = cmp::min(req.leader_commit, (self.log.len() - 1) as u64);
         }
+
         return self.respond_to_ae(true);
     }
 }

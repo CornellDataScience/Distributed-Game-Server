@@ -3,8 +3,6 @@ use local_ip_address::local_ip;
 use raft::{node, rpc};
 use std::{env, fs, io, net::SocketAddr};
 use tokio::sync::mpsc;
-use crate::node::ServerConfig;
-use std::time::Duration;
 
 #[tokio::main]
 async fn main() {
@@ -31,8 +29,8 @@ async fn main() {
     let contents = fs::read_to_string("data/peers.txt").expect("cannot read file");
     let peers: Vec<String> = contents
         .split("\n")
-        .map(|addr| String::from("http://") + &String::from(addr))
         .filter(|addr| addr != &server_addr)
+        .map(|addr| String::from("http://") + &String::from(addr))
         .collect();
     if peers.len() == 0 {
         println!("peers.txt must have at least one peer");
@@ -59,11 +57,6 @@ async fn main() {
             _ => continue,
         };
     }
-
-    let config = ServerConfig {
-        timeout: Duration::new(1, 0),
-    };
-
     let mut node = node::Node::new(server_addr, peers, rx);
     node.start().await;
 }

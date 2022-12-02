@@ -1,7 +1,8 @@
-use crate::raft::node::Event;
-use crate::raft::raft::{
+use super::node::Event;
+use super::raft::GetRequest;
+use super::raft::{
     raft_server::Raft, raft_server::RaftServer, AppendEntriesRequest, AppendEntriesResponse,
-    VoteRequest, VoteResponse,
+    GetResponse, PutRequest, PutResponse, VoteRequest, VoteResponse,
 };
 use std::error::Error;
 use std::net::SocketAddr;
@@ -48,6 +49,28 @@ impl Raft for RaftRPCHandler {
         let (tx, rx) = oneshot::channel();
         self.sender
             .send(Event::AppendEntries {
+                req: request.into_inner(),
+                tx: tx,
+            })
+            .map_err(|e| internal_err(&e))?;
+        rx.await.map_err(|e| internal_err(&e))?
+    }
+
+    async fn put(&self, request: Request<PutRequest>) -> Result<Response<PutResponse>, Status> {
+        let (tx, rx) = oneshot::channel();
+        self.sender
+            .send(Event::ClientPutRequest {
+                req: request.into_inner(),
+                tx: tx,
+            })
+            .map_err(|e| internal_err(&e))?;
+        rx.await.map_err(|e| internal_err(&e))?
+    }
+
+    async fn get(&self, request: Request<GetRequest>) -> Result<Response<GetResponse>, Status> {
+        let (tx, rx) = oneshot::channel();
+        self.sender
+            .send(Event::ClientGetRequest {
                 req: request.into_inner(),
                 tx: tx,
             })
