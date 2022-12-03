@@ -266,14 +266,11 @@ impl Node {
 
     /// [start_candidate] starts a new node with candidate and sends RequestVoteRPCs to all peer nodes. Precondition: self.state == candidate
     async fn start_candidate(&mut self) {
-        // TODO: implement candidate loop:
-        //  1. Start election timer
-        //  2. For each peer, establish connection, send RequestVoteRPC
-        //       If peer is unreachable, treat it as a 'no' vote
-        //  3. If majority of votes received, change state to
-        //  4. leader and return from function
         loop {
             println!("starting candidate");
+            if self.state != State::Candidate {
+                return;
+            }
             // Increment term
             self.current_term += 1;
             // Send RequestVote to all other servers
