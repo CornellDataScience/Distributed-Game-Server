@@ -301,7 +301,7 @@ impl Node {
 
     pub fn refresh_timeout(self: &mut Self) {
         let mut rng = rand::thread_rng();
-        let num = rng.gen_range(150..1000);
+        let num = rng.gen_range(300..1000);
         self.next_timeout = Some(Instant::now() + Duration::from_millis(num));
     }
 
@@ -361,15 +361,15 @@ impl Node {
             // Check if the majority of the votes are received, change state
             let mut num_votes = 1;
             while !responses.is_empty() {
-                if num_votes > (self.peers.len() + 1) / 2 {
-                    self.state = State::Leader;
-                    return;
-                }
                 match select_all(responses).await {
                     (Ok(Ok(res)), _, remaining) => {
                         let r = res.into_inner();
                         if r.vote_granted {
                             num_votes += 1;
+                            if num_votes > (self.peers.len() + 1) / 2 {
+                                self.state = State::Leader;
+                                return;
+                            }
                         } else if r.term > self.current_term {
                             self.current_term = r.term;
                             self.state = State::Follower;
@@ -386,7 +386,7 @@ impl Node {
                     Ok(event) => self.handle_event(event).await,
                     _ => {
                         let mut rng = rand::thread_rng();
-                        let num = rng.gen_range(150..1000);
+                        let num = rng.gen_range(300..1000);
                         tokio::time::sleep(Duration::from_millis(num)).await;
                         break;
                     }
@@ -529,7 +529,7 @@ impl Node {
             return self.respond_to_ae(false);
         }
         self.refresh_timeout();
-        if req.term >= self.current_term {
+        if req.term > self.current_term {
             self.state = State::Follower;
             self.current_term = req.term;
             self.voted_for = Some(req.leader_id);
@@ -571,8 +571,6 @@ impl Node {
 
 #[cfg(test)]
 mod tests {
-    use std::thread::sleep;
-
     use super::*;
 
     fn new_node() -> Node {
