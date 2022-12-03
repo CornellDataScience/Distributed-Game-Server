@@ -33,6 +33,7 @@ impl Client {
     fn find_leader(&mut self) -> RaftClient<Channel> {
         let dst_ip = &match &self.current_leader {
             None => {
+                println!("picking random node from cluster");
                 let n = rand::thread_rng().gen_range(0..self.peers.len());
                 self.peers[n].clone()
             }
@@ -44,8 +45,10 @@ impl Client {
     pub fn get(&mut self, key: String) -> i64 {
         let mut dst = self.find_leader();
         let req = GetRequest { key: key.clone() };
+        println!("getting");
         match block_on(dst.get(req)) {
             Ok(res) => {
+                println!("got");
                 let r = res.into_inner();
                 if r.success {
                     return r.value;
@@ -64,8 +67,10 @@ impl Client {
             value: value,
             serial_number: 0,
         };
+        println!("putting");
         match block_on(dst.put(req)) {
             Ok(res) => {
+                println!("put");
                 let r = res.into_inner();
                 if r.success {
                     return true;
