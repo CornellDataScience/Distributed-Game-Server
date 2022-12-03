@@ -6,6 +6,8 @@ use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() {
+    println!("{:?}", env::current_dir());
+
     let args: Vec<String> = env::args().collect();
 
     // run servers from localhost at some port (default 8080)

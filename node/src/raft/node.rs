@@ -297,6 +297,7 @@ impl Node {
 
         // Check if the majority of the votes are received, change state 
         let mut num_votes = 1;
+        println!("{:?}", self.peers);
         while !responses.is_empty() {
             match select_all(responses).await {
                 (Ok(Ok(res)), _, remaining) => {
@@ -319,11 +320,13 @@ impl Node {
             }
         }
 
+        // Cuz we can't solve the halting problem lol
         loop {
             tokio::select! {
                 Some(event) = self.mailbox.recv() => {
                     self.handle_event(event).await
-                }
+                }, 
+                else => break,
             }
         }
     }
