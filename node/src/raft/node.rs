@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
 use tonic::transport::Channel;
 use tonic::{Request, Response, Status};
+use rand::Rng;
 
 #[derive(Debug)]
 pub enum Event {
@@ -296,15 +297,15 @@ impl Node {
             // Check if the majority of the votes are received, change state
             let mut num_votes = 1;
             while !responses.is_empty() {
+                if num_votes > (self.peers.len() + 1) / 2 {
+                    self.state = State::Leader;
+                    return;
+                }
                 match select_all(responses).await {
                     (Ok(Ok(res)), _, remaining) => {
                         let r = res.into_inner();
                         if r.vote_granted {
                             num_votes += 1;
-                            if num_votes > (self.peers.len() + 1) / 2 {
-                                self.state = State::Leader;
-                                return;
-                            }
                         } else if r.term > self.current_term {
                             self.current_term = r.term;
                             self.state = State::Follower;
@@ -324,15 +325,24 @@ impl Node {
                         println!("{:?}", event);
                         self.handle_event(event).await
                     }
-                    _ => break,
+                    _ => {
+                        let mut rng = rand::thread_rng();
+                        let num = rng.gen_range(100..300);
+                        //let num = rng.random::<f64>() * (300 - 100) + 100;
+                        tokio::time::sleep(Duration::from_millis(num)).await;break;
+                    }
                 }
             }
         }
+        
     }
 
     async fn start_leader(&mut self) {
-        println!("starting leader in term {}", self.current_term);
         loop {
+            println!("starting leader in term {}", self.current_term);
+            if self.state != State::Leader {
+                return;
+            }
             tokio::select! {
                 Some(event) = self.mailbox.recv() => {
                     self.handle_event(event).await
