@@ -6,13 +6,13 @@ use crate::raft::raft::{
 use core::panic;
 use futures::executor::block_on;
 use futures::future::select_all;
+use rand::Rng;
 use std::cmp;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
 use tonic::transport::Channel;
 use tonic::{Request, Response, Status};
-use rand::Rng;
 
 #[derive(Debug)]
 pub enum Event {
@@ -250,17 +250,15 @@ impl Node {
         // TODO: implement follower loop: if timer runs out,
         // change state to candidate and return from function.
         println!("starting follower");
-        self.next_timeout = Some(Instant::now());
+        self.refresh_timeout();
         loop {
             if self.timed_out() {
                 self.state = State::Candidate;
-                break;
+                return;
             }
-            tokio::select! {
-                Some(event) = self.mailbox.recv() => {
-                    self.handle_event(event).await
-                }
-                else => { () }
+            match self.mailbox.try_recv() {
+                Ok(event) => self.handle_event(event).await,
+                _ => continue,
             }
         }
     }
@@ -317,25 +315,19 @@ impl Node {
                     (_, _, remaining) => responses = remaining,
                 }
             }
-            println!("exiting requestvote loop");
             loop {
-                println!("event loop");
                 match self.mailbox.try_recv() {
-                    Ok(event) => {
-                        println!("{:?}", event);
-                        self.handle_event(event).await
-                    }
+                    Ok(event) => self.handle_event(event).await,
                     _ => {
                         let mut rng = rand::thread_rng();
                         let num = rng.gen_range(100..300);
                         //let num = rng.random::<f64>() * (300 - 100) + 100;
                         tokio::time::sleep(Duration::from_millis(num)).await;
-                        return;
+                        break;
                     }
                 }
             }
         }
-        
     }
 
     async fn start_leader(&mut self) {
@@ -398,10 +390,6 @@ impl Node {
         request: Request<VoteRequest>,
     ) -> Result<Response<VoteResponse>, Status> {
         let req = request.into_inner();
-        println!(
-            "handling request vote: {:?}, term = {:?}",
-            req, self.current_term
-        );
         if req.term < self.current_term {
             return self.respond_to_vote(false);
         }
