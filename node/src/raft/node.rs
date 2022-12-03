@@ -1,17 +1,17 @@
+use super::raft::raft_client::RaftClient;
 use crate::raft::raft::{
     AppendEntriesRequest, AppendEntriesResponse, Command, GetRequest, GetResponse, LogEntry,
     PutRequest, PutResponse, VoteRequest, VoteResponse,
 };
 use core::panic;
+use futures::executor::block_on;
 use futures::future::select_all;
 use std::cmp;
-use std::time::{Duration, Instant};
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
-use tonic::{Request, Response, Status};
 use tonic::transport::Channel;
-use futures::executor::block_on;
-use super::raft::raft_client::RaftClient;
+use tonic::{Request, Response, Status};
 
 #[derive(Debug)]
 pub enum Event {
@@ -72,7 +72,7 @@ pub struct Node {
     // to receive messages from client or RPC server
     mailbox: mpsc::UnboundedReceiver<Event>,
 
-    //connections to peers 
+    //connections to peers
     connections: HashMap<String, RaftClient<Channel>>,
 }
 
@@ -272,64 +272,69 @@ impl Node {
         //       If peer is unreachable, treat it as a 'no' vote
         //  3. If majority of votes received, change state to
         //  4. leader and return from function
-
-        println!("starting candidate");
-        // Increment term 
-        self.current_term += 1;
-        // Send RequestVote to all other servers 
-        let mut responses = Vec::new();
-        for peer in &self.peers {
-            let mut client = RaftClient::connect(peer.clone()).await.unwrap();
-            let (last_log_idx, last_term) = match self.log.len() {
-                0 => (None, 0),
-                i => (Some (i as u64), self.log[i - 1].term)
-            };
-            let request = Request::new(VoteRequest {
-                term: self.current_term,
-                candidate_id: self.id.clone(),
-                last_log_index: last_log_idx, 
-                last_log_term: last_term,
-            });
-            responses.push(tokio::spawn(
-                async move { client.request_vote(request).await },
-            ));
-        }
-
-        // Check if the majority of the votes are received, change state 
-        let mut num_votes = 1;
-        while !responses.is_empty() {
-            match select_all(responses).await {
-                (Ok(Ok(res)), _, remaining) => {
-                    let r = res.into_inner();
-                    if r.vote_granted {
-                        num_votes += 1;
-                        if num_votes > (self.peers.len() + 1) / 2 {
-                            self.state = State::Leader; 
-                            return 
-                        }
-                    } else if r.term > self.current_term {
-                        self.current_term = r.term;
-                        self.state = State::Follower;
-                        self.voted_for = None;
-                        return
-                    }
-                    responses = remaining
-                }
-                (_, _, remaining) => responses = remaining,
-            }
-        }
-
         loop {
-            tokio::select! {
-                Some(event) = self.mailbox.recv() => {
-                    self.handle_event(event).await
+            println!("starting candidate");
+            // Increment term
+            self.current_term += 1;
+            // Send RequestVote to all other servers
+            let mut responses = Vec::new();
+            for peer in &self.peers {
+                let mut client = RaftClient::connect(peer.clone()).await.unwrap();
+                let (last_log_idx, last_term) = match self.log.len() {
+                    0 => (None, 0),
+                    i => (Some(i as u64), self.log[i - 1].term),
+                };
+                let mut request = Request::new(VoteRequest {
+                    term: self.current_term,
+                    candidate_id: self.id.clone(),
+                    last_log_index: last_log_idx,
+                    last_log_term: last_term,
+                });
+                request.set_timeout(Duration::from_secs(5));
+                responses.push(tokio::spawn(
+                    async move { client.request_vote(request).await },
+                ));
+            }
+
+            // Check if the majority of the votes are received, change state
+            let mut num_votes = 1;
+            while !responses.is_empty() {
+                match select_all(responses).await {
+                    (Ok(Ok(res)), _, remaining) => {
+                        let r = res.into_inner();
+                        if r.vote_granted {
+                            num_votes += 1;
+                            if num_votes > (self.peers.len() + 1) / 2 {
+                                self.state = State::Leader;
+                                return;
+                            }
+                        } else if r.term > self.current_term {
+                            self.current_term = r.term;
+                            self.state = State::Follower;
+                            self.voted_for = None;
+                            return;
+                        }
+                        responses = remaining
+                    }
+                    (_, _, remaining) => responses = remaining,
+                }
+            }
+            println!("exiting requestvote loop");
+            loop {
+                println!("event loop");
+                match self.mailbox.try_recv() {
+                    Ok(event) => {
+                        println!("{:?}", event);
+                        self.handle_event(event).await
+                    }
+                    _ => break,
                 }
             }
         }
     }
 
     async fn start_leader(&mut self) {
-        println!("starting leader");
+        println!("starting leader in term {}", self.current_term);
         loop {
             tokio::select! {
                 Some(event) = self.mailbox.recv() => {
@@ -385,6 +390,10 @@ impl Node {
         request: Request<VoteRequest>,
     ) -> Result<Response<VoteResponse>, Status> {
         let req = request.into_inner();
+        println!(
+            "handling request vote: {:?}, term = {:?}",
+            req, self.current_term
+        );
         if req.term < self.current_term {
             return self.respond_to_vote(false);
         }
@@ -414,7 +423,7 @@ impl Node {
             return self.respond_to_ae(false);
         }
         self.refresh_timeout();
-        if req.term > self.current_term {
+        if req.term >= self.current_term {
             self.state = State::Follower;
             self.current_term = req.term;
             self.voted_for = Some(req.leader_id);
