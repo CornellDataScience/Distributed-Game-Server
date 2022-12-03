@@ -329,7 +329,8 @@ impl Node {
                         let mut rng = rand::thread_rng();
                         let num = rng.gen_range(100..300);
                         //let num = rng.random::<f64>() * (300 - 100) + 100;
-                        tokio::time::sleep(Duration::from_millis(num)).await;break;
+                        tokio::time::sleep(Duration::from_millis(num)).await;
+                        return;
                     }
                 }
             }
