@@ -3,7 +3,6 @@ use crate::raft::raft::{
     AppendEntriesRequest, AppendEntriesResponse, Command, GetRequest, GetResponse, LogEntry,
     PutRequest, PutResponse, VoteRequest, VoteResponse,
 };
-use core::panic;
 use futures::executor::block_on;
 use futures::future::select_all;
 use rand::Rng;
@@ -93,7 +92,7 @@ impl Node {
             voted_for: None,
             next_timeout: None,
             config: ServerConfig {
-                timeout: Duration::new(1, 0),
+                timeout: Duration::new(2, 0),
             },
             log: Vec::new(),
             mailbox: mailbox,
@@ -101,12 +100,74 @@ impl Node {
         }
     }
 
-    fn replicate(&mut self, command: Command) -> Result<Response<PutResponse>, Status> {
+    async fn replicate(
+        &mut self,
+        command: Option<Command>,
+    ) -> Result<Response<PutResponse>, Status> {
         self.log.push(LogEntry {
-            command: Some(command),
+            command: command,
             term: self.current_term,
         });
         println!("{} is replicating command", self.id);
+        // let mut requests = Vec::new();
+        // let mut responses = Vec::new();
+        // for peer in &self.peers {
+        //     let (prev_log_index, prev_log_term) = match self.next_index.get(peer) {
+        //         None => (None, 0),
+        //         Some(a) => (Some(*a), self.log[*a as usize].term),
+        //     };
+        //     let mut client = match RaftClient::connect(peer.clone()).await {
+        //         Err(_) => continue,
+        //         Ok(c) => c,
+        //     };
+        //     let request = AppendEntriesRequest {
+        //         term: self.current_term,
+        //         leader_id: self.id.clone(),
+        //         entries: Vec::new(),
+        //         leader_commit: self.commit_index,
+        //         prev_log_index: prev_log_index,
+        //         prev_log_term: prev_log_term,
+        //     };
+        //     responses.push(tokio::spawn(async move {
+        //         client.append_entries(Request::new(request)).await
+        //     }));
+        //     requests.push((peer.clone(), request));
+        // }
+        // while !responses.is_empty() {
+        //     match select_all(responses).await {
+        //         (Ok(Ok(res)), i, remaining) => {
+        //             let r = res.into_inner();
+        //             if !r.success {
+        //                 let mut client = match RaftClient::connect(requests[i].0.clone()).await {
+        //                     Err(_) => continue,
+        //                     Ok(c) => c,
+        //                 };
+        //                 let req = &requests[i].1;
+        //                 // req.prev_log_index = match req.prev_log_index {
+        //                 //     None => None,
+        //                 //     Some(0) => None,
+        //                 //     Some(i) => Some(i - 1),
+        //                 // };
+        //                 responses.push(tokio::spawn(async move {
+        //                     client
+        //                         .append_entries(Request::new(requests[i].1.clone()))
+        //                         .await
+        //                 }));
+        //             }
+        //             if r.term > self.current_term {
+        //                 self.current_term = r.term;
+        //                 self.state = State::Follower;
+        //                 self.voted_for = None;
+        //                 return Ok(Response::new(PutResponse {
+        //                     success: false,
+        //                     leader_id: None,
+        //                 }));
+        //             }
+        //             responses = remaining
+        //         }
+        //         (_, _, remaining) => responses = remaining,
+        //     }
+        // }
         // Once a leader has been elected, it begins servicing
         // client requests. Each client request contains a command to
         // be executed by the replicated state machines. The leader
@@ -137,16 +198,19 @@ impl Node {
                     success: false,
                     leader_id: self.voted_for.clone(),
                 })))
-                .unwrap_or_else(|e| println!("{:?}", e));
+                .unwrap_or_else(|_| ());
         }
-        // exchange heartbeats with majority of cluster
-        let (prev_log_index, prev_log_term) = match self.next_index.get("a") {
-            None => (None, 0),
-            Some(a) => (Some(*a), self.log[*a as usize].term),
-        };
         let mut responses = Vec::new();
         for peer in &self.peers {
-            let mut client = RaftClient::connect(peer.clone()).await.unwrap();
+            // exchange heartbeats with majority of cluster
+            let (prev_log_index, prev_log_term) = match self.next_index.get(peer) {
+                None => (None, 0),
+                Some(a) => (Some(*a), self.log[*a as usize].term),
+            };
+            let mut client = match RaftClient::connect(peer.clone()).await {
+                Err(_) => continue,
+                Ok(c) => c,
+            };
             let request = Request::new(AppendEntriesRequest {
                 term: self.current_term,
                 leader_id: self.id.clone(),
@@ -173,7 +237,7 @@ impl Node {
                                     success: true,
                                     leader_id: Some(self.id.clone()),
                                 })))
-                                .unwrap_or_else(|e| println!("{:?}", e));
+                                .unwrap_or_else(|_| ());
                         }
                     } else if r.term > self.current_term {
                         self.current_term = r.term;
@@ -185,7 +249,7 @@ impl Node {
                                 success: false,
                                 leader_id: Some(self.id.clone()),
                             })))
-                            .unwrap_or_else(|e| println!("{:?}", e));
+                            .unwrap_or_else(|_| ());
                     }
                     responses = remaining
                 }
@@ -198,7 +262,7 @@ impl Node {
                 success: false,
                 leader_id: Some(self.id.clone()),
             })))
-            .unwrap_or_else(|e| println!("{:?}", e));
+            .unwrap_or_else(|_| ());
     }
 
     async fn handle_put_request(
@@ -211,32 +275,34 @@ impl Node {
                 success: false,
                 leader_id: self.voted_for.clone(),
             })))
-            .unwrap_or_else(|e| println!("{:?}", e));
+            .unwrap_or_else(|_| ());
             return;
         }
         let command = Command {
             key: req.key,
             value: req.value,
         };
-        tx.send(self.replicate(command))
-            .unwrap_or_else(|e| println!("{:?}", e))
+        tx.send(self.replicate(Some(command)).await)
+            .unwrap_or_else(|_| ());
     }
 
     async fn handle_event(&mut self, event: Event) {
         match event {
             Event::RequestVote { req, tx } => tx
                 .send(self.request_vote(tonic::Request::new(req)))
-                .unwrap_or_else(|e| println!("{:?}", e)),
+                .unwrap_or_else(|_| ()),
             Event::AppendEntries { req, tx } => tx
                 .send(self.append_entries(tonic::Request::new(req)))
-                .unwrap_or_else(|e| println!("{:?}", e)),
+                .unwrap_or_else(|_| ()),
             Event::ClientGetRequest { req, tx } => return self.handle_get_request(req, tx).await,
             Event::ClientPutRequest { req, tx } => return self.handle_put_request(req, tx).await,
         }
     }
 
     pub fn refresh_timeout(self: &mut Self) {
-        self.next_timeout = Some(Instant::now() + self.config.timeout);
+        let mut rng = rand::thread_rng();
+        let num = rng.gen_range(150..1000);
+        self.next_timeout = Some(Instant::now() + Duration::from_millis(num));
     }
 
     pub fn timed_out(self: &mut Self) -> bool {
@@ -247,10 +313,8 @@ impl Node {
     }
 
     async fn start_follower(&mut self) {
-        // TODO: implement follower loop: if timer runs out,
-        // change state to candidate and return from function.
-        println!("starting follower");
         self.refresh_timeout();
+        println!("starting follower");
         loop {
             if self.timed_out() {
                 self.state = State::Candidate;
@@ -266,16 +330,18 @@ impl Node {
     /// [start_candidate] starts a new node with candidate and sends RequestVoteRPCs to all peer nodes. Precondition: self.state == candidate
     async fn start_candidate(&mut self) {
         loop {
-            println!("starting candidate");
             if self.state != State::Candidate {
                 return;
             }
-            // Increment term
+            println!("starting candidate");
             self.current_term += 1;
-            // Send RequestVote to all other servers
+            self.voted_for = Some(self.id.clone());
             let mut responses = Vec::new();
             for peer in &self.peers {
-                let mut client = RaftClient::connect(peer.clone()).await.unwrap();
+                let mut client = match RaftClient::connect(peer.clone()).await {
+                    Err(_) => continue,
+                    Ok(c) => c,
+                };
                 let (last_log_idx, last_term) = match self.log.len() {
                     0 => (None, 0),
                     i => (Some(i as u64), self.log[i - 1].term),
@@ -286,7 +352,7 @@ impl Node {
                     last_log_index: last_log_idx,
                     last_log_term: last_term,
                 });
-                request.set_timeout(Duration::from_secs(5));
+                request.set_timeout(Duration::from_secs(1));
                 responses.push(tokio::spawn(
                     async move { client.request_vote(request).await },
                 ));
@@ -320,8 +386,7 @@ impl Node {
                     Ok(event) => self.handle_event(event).await,
                     _ => {
                         let mut rng = rand::thread_rng();
-                        let num = rng.gen_range(100..300);
-                        //let num = rng.random::<f64>() * (300 - 100) + 100;
+                        let num = rng.gen_range(150..1000);
                         tokio::time::sleep(Duration::from_millis(num)).await;
                         break;
                     }
@@ -330,17 +395,59 @@ impl Node {
         }
     }
 
+    async fn send_heartbeat(&mut self) {
+        if self.state != State::Leader {
+            return;
+        }
+        let mut responses = Vec::new();
+        for peer in &self.peers {
+            let (prev_log_index, prev_log_term) = match self.next_index.get(peer) {
+                None => (None, 0),
+                Some(a) => (Some(*a), self.log[*a as usize].term),
+            };
+            let mut client = match RaftClient::connect(peer.clone()).await {
+                Err(_) => continue,
+                Ok(c) => c,
+            };
+            let request = Request::new(AppendEntriesRequest {
+                term: self.current_term,
+                leader_id: self.id.clone(),
+                entries: Vec::new(),
+                leader_commit: self.commit_index,
+                prev_log_index: prev_log_index,
+                prev_log_term: prev_log_term,
+            });
+            responses.push(tokio::spawn(
+                async move { client.append_entries(request).await },
+            ));
+        }
+        while !responses.is_empty() {
+            match select_all(responses).await {
+                (Ok(Ok(res)), _, remaining) => {
+                    let r = res.into_inner();
+                    if r.term > self.current_term {
+                        self.current_term = r.term;
+                        self.state = State::Follower;
+                        self.voted_for = None;
+                        return;
+                    }
+                    responses = remaining
+                }
+                (_, _, remaining) => responses = remaining,
+            }
+        }
+    }
+
     async fn start_leader(&mut self) {
+        println!("starting leader in term {:?}", self.current_term);
+        // commit no-op entry at the start of term
+        // self.replicate(None);
         loop {
-            println!("starting leader in term {}", self.current_term);
             if self.state != State::Leader {
                 return;
             }
-            tokio::select! {
-                Some(event) = self.mailbox.recv() => {
-                    self.handle_event(event).await
-                }
-            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            self.send_heartbeat().await;
         }
     }
 
@@ -364,6 +471,9 @@ impl Node {
         match log_index {
             None => self.log.len() > 0,
             Some(i) => {
+                if self.log.len() == 0 {
+                    return false;
+                }
                 let last_index = self.log.len() - 1;
                 let last_term = self.log[last_index].term;
                 return last_term > log_term || (last_term == log_term && last_index as u64 >= i);
