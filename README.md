@@ -16,3 +16,17 @@ An implementation of the Raft Consensus algorithm for the Cornell Data Science D
 ## Tests
 
 - To run the tests, run `cargo test` from any directory.
+
+
+## Dependencies
+
+protobuf3
+
+### Mac
+
+`brew install protobuf`
+
+### Ubuntu
+
+`apt-get protobuf-compiler` on Ubuntu may not get the right version. 
+Install a precompiled binary of version 3.15.8+ from https://grpc.io/docs/protoc-installation/
