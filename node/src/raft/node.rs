@@ -44,6 +44,7 @@ enum State {
 
 #[derive(Debug)]
 pub struct ServerConfig {
+    /// Configurable settings for server
     pub timeout: Duration,
 }
 
@@ -78,6 +79,13 @@ pub struct Node {
 
 #[allow(dead_code)]
 impl Node {
+    /// Returns a new follower node
+    ///
+    /// # Arguments
+    /// * `id` - String used to name of node
+    /// * `peers` - Vector of other nodes in the cluster
+    /// * `mailbox` - Mailbox to collect incoming requests from other nodes
+    ///
     pub fn new(id: String, peers: Vec<String>, mailbox: mpsc::UnboundedReceiver<Event>) -> Self {
         Self {
             id: id,
@@ -100,6 +108,28 @@ impl Node {
         }
     }
 
+    /// Copies command into log of node
+    ///
+    /// # Arguments
+    /// * `self` - Node recieving the request
+    /// * `command` - Request being recieved
+    ///
+    /// # Explanation
+    ///
+    /// Once a leader has been elected, it begins servicing
+    /// client requests. Each client request contains a command to
+    /// be executed by the replicated state machines. The leader
+    /// appends the command to its log as a new entry, then issues
+    /// AppendEntries RPCs in parallel to each of the other
+    /// servers to replicate the entry. When the entry has been
+    /// safely replicated (as described below), the leader applies
+    /// the entry to its state machine and returns the result of that
+    /// execution to the client.
+    ///
+    /// A log entry is committed once the leader
+    /// that created the entry has replicated it on a majority of
+    /// the servers (e.g., entry 7 in Figure 6)
+    ///
     async fn replicate(
         &mut self,
         command: Option<Command>,
@@ -168,22 +198,17 @@ impl Node {
         //         (_, _, remaining) => responses = remaining,
         //     }
         // }
-        // Once a leader has been elected, it begins servicing
-        // client requests. Each client request contains a command to
-        // be executed by the replicated state machines. The leader
-        // appends the command to its log as a new entry, then issues
-        // AppendEntries RPCs in parallel to each of the other
-        // servers to replicate the entry. When the entry has been
-        // safely replicated (as described below), the leader applies
-        // the entry to its state machine and returns the result of that
-        // execution to the client.
 
-        // A log entry is committed once the leader
-        // that created the entry has replicated it on a majority of
-        // the servers (e.g., entry 7 in Figure 6)
         Err(Status::unimplemented("not implemented"))
     }
 
+    /// Recieves client request, verifies node's leadership by exchanging heartbeat
+    /// to rest of cluster, then sends success or failure back to client
+    ///
+    /// # Arguments
+    /// `self` - Node recieving the client request
+    /// `req` - Request sent by client
+    /// `tx` - GRPC transaction
     async fn handle_get_request(
         &mut self,
         req: GetRequest,
@@ -265,6 +290,12 @@ impl Node {
             .unwrap_or_else(|_| ());
     }
 
+    /// Sends command to rest of cluster
+    ///
+    /// # Arguments
+    /// `self` - Node sending request
+    /// `req` - Request being sent
+    /// `tx` - GRPC Transaction
     async fn handle_put_request(
         &mut self,
         req: PutRequest,
@@ -286,6 +317,11 @@ impl Node {
             .unwrap_or_else(|_| ());
     }
 
+    /// Handles events received by node
+    ///
+    /// # Arguments
+    /// `self` - Node receiving event
+    /// `event` - Event being
     async fn handle_event(&mut self, event: Event) {
         match event {
             Event::RequestVote { req, tx } => tx
