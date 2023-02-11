@@ -289,10 +289,10 @@ impl Node {
     async fn handle_event(&mut self, event: Event) {
         match event {
             Event::RequestVote { req, tx } => tx
-                .send(self.request_vote(tonic::Request::new(req)))
+                .send(self.handle_request_vote(tonic::Request::new(req)))
                 .unwrap_or_else(|_| ()),
             Event::AppendEntries { req, tx } => tx
-                .send(self.append_entries(tonic::Request::new(req)))
+                .send(self.handle_append_entries(tonic::Request::new(req)))
                 .unwrap_or_else(|_| ()),
             Event::ClientGetRequest { req, tx } => return self.handle_get_request(req, tx).await,
             Event::ClientPutRequest { req, tx } => return self.handle_put_request(req, tx).await,
@@ -467,6 +467,7 @@ impl Node {
         }
     }
 
+    /// checks if a log entry (log_term, log_index) exceeds the current node's log term and index
     fn log_newer_than(&self, log_term: u64, log_index: Option<u64>) -> bool {
         match log_index {
             None => self.log.len() > 0,
@@ -495,10 +496,12 @@ impl Node {
         }))
     }
 
-    pub fn request_vote(
+    pub fn handle_request_vote(
         &mut self,
         request: Request<VoteRequest>,
     ) -> Result<Response<VoteResponse>, Status> {
+        // Respond to a Vote Request.
+        // Sends a failure response if request is from a stale term or if node has already voted
         let req = request.into_inner();
         if req.term < self.current_term {
             return self.respond_to_vote(false);
@@ -520,10 +523,13 @@ impl Node {
     }
 
     // Function for when a server receives an append entries request
-    pub fn append_entries(
+    pub fn handle_append_entries(
         &mut self,
         request: Request<AppendEntriesRequest>,
     ) -> Result<Response<AppendEntriesResponse>, Status> {
+        // Responds to an Append Entries Request.
+        // Sends a failure response if request is from a stale term
+        // Otherwise, checks log consistency and adds missing entries
         let req = request.into_inner();
         if req.term < self.current_term {
             return self.respond_to_ae(false);
@@ -579,7 +585,7 @@ mod tests {
     }
 
     fn test_request_vote(receiver: &mut Node, req: VoteRequest, expected: VoteResponse) {
-        match receiver.request_vote(tonic::Request::new(req)) {
+        match receiver.handle_request_vote(tonic::Request::new(req)) {
             Err(e) => println!("unexpected request_vote error: {}", e),
             Ok(res) => {
                 assert_eq!(res.into_inner(), expected);
@@ -718,7 +724,7 @@ mod tests {
         req: AppendEntriesRequest,
         expected: AppendEntriesResponse,
     ) {
-        match receiver.append_entries(tonic::Request::new(req)) {
+        match receiver.handle_append_entries(tonic::Request::new(req)) {
             Err(e) => println!("unexpected request_vote error: {}", e),
             Ok(res) => {
                 assert_eq!(res.into_inner(), expected);

@@ -3,6 +3,7 @@ use client::Client;
 use std::fs;
 #[tokio::main]
 async fn main() {
+    // set up a client and make 2 requests, a put then a get
     let contents = fs::read_to_string("data/peers.txt").expect("cannot read file");
     let peers: Vec<String> = contents
         .split("\n")
