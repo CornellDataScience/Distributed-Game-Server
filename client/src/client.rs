@@ -19,6 +19,7 @@ pub struct Client {
 
 impl Client {
     pub fn new(peers: Vec<String>) -> Self {
+        /// Creates a new client from a vector of server nodes
         let mut connections = HashMap::new();
         peers.clone().into_iter().for_each(|ip| {
             connections.insert(ip.clone(), block_on(RaftClient::connect(ip)).unwrap());
@@ -31,6 +32,8 @@ impl Client {
     }
 
     fn find_leader(&mut self) -> RaftClient<Channel> {
+        /// If current leader unknown, finds the leader of the server by sending a
+        /// message to a random server in the cluster
         let dst_ip = &match &self.current_leader {
             None => {
                 let n = rand::thread_rng().gen_range(0..self.peers.len());
@@ -42,6 +45,7 @@ impl Client {
     }
 
     pub fn get(&mut self, key: String) -> i64 {
+        /// Gets the value of a key from the leader
         let mut dst = self.find_leader();
         let req = GetRequest { key: key.clone() };
         match block_on(dst.get(req)) {
@@ -58,6 +62,7 @@ impl Client {
     }
 
     pub fn put(&mut self, key: String, value: i64) -> bool {
+        /// Pushes a key value pair to the leader
         let mut dst = self.find_leader();
         let req = PutRequest {
             key: key.clone(),
