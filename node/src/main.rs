@@ -8,15 +8,20 @@ use tokio::sync::mpsc;
 async fn main() {
     let args: Vec<String> = env::args().collect();
 
+    println!("number of args passed:{} \n {:#?}", args.len(), args);
+    // command format: cargo run <--bin node> <optional port>
     // run servers from localhost at some port (default 8080)
     let mut port = String::from(":8080");
     if args.len() >= 2 {
         port = ":".to_string() + &String::from(&args[1]);
     }
+    // server_addr is <ip><:port>
+    // by default use local ip, if localhost is specified, use [::1]
     let mut server_addr = local_ip().unwrap().to_string() + &port;
     if args.len() == 3 && args[2] == "localhost" {
         server_addr = String::from("[::1]") + &port;
     }
+    println!("{:?}",server_addr.parse::<SocketAddr>());
     let socket = match server_addr.parse::<SocketAddr>() {
         Err(e) => {
             println!("could not parse IP {server_addr}: {e}");
@@ -25,7 +30,8 @@ async fn main() {
         Ok(a) => a,
     };
 
-    // read from peers.txt to get the ip addresses of server nodes
+    // read from peers.txt to get the ip addresses of the other server nodes, ignoring its own address
+    // TODO: if line is empty, ignore
     let contents = fs::read_to_string("data/peers.txt").expect("cannot read file");
     let peers: Vec<String> = contents
         .split("\n")

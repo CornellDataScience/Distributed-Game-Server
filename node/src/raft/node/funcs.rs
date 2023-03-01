@@ -427,6 +427,7 @@ impl Node {
         // Sets up connection to all peer nodes (panic if it can't find the connection - fix later :D)
         let mut connections = HashMap::new();
         self.peers.clone().into_iter().for_each(|ip| {
+            println!("Connecting to {}", ip);
             connections.insert(ip.clone(), block_on(RaftClient::connect(ip)).unwrap());
         });
         self.connections = connections;
