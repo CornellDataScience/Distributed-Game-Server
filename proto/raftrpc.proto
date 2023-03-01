@@ -1,7 +1,7 @@
 syntax = "proto3";
-package raft;
+package raftrpc;
 
-service Raft {
+service RaftRPC {
   rpc RequestVote (VoteRequest) returns (VoteResponse);
   rpc AppendEntries (AppendEntriesRequest) returns (AppendEntriesResponse);
   rpc Put(PutRequest) returns (PutResponse);

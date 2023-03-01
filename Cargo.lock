@@ -123,18 +123,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
-name = "client"
-version = "0.1.0"
-dependencies = [
- "futures",
- "prost",
- "rand",
- "tokio",
- "tonic",
- "tonic-build",
-]
-
-[[package]]
 name = "darling"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -198,6 +186,20 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "digs"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "local-ip-address",
+ "prost",
+ "public-ip",
+ "rand",
+ "tokio",
+ "tonic",
+ "tonic-build",
 ]
 
 [[package]]
@@ -655,20 +657,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77a5d83df9f36fe23f0c3648c6bbb8b0298bb5f1939c8f2704431371f4b84d43"
 dependencies = [
  "smallvec",
-]
-
-[[package]]
-name = "node"
-version = "0.1.0"
-dependencies = [
- "futures",
- "local-ip-address",
- "prost",
- "public-ip",
- "rand",
- "tokio",
- "tonic",
- "tonic-build",
 ]
 
 [[package]]
