@@ -55,6 +55,7 @@ pub struct Node {
     // persistent state
     current_term: u64,
     voted_for: Option<String>,
+    voted: bool,
     log: Vec<LogEntry>,
     next_timeout: Option<Instant>,
     config: ServerConfig,

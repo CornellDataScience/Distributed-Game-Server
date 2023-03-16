@@ -23,6 +23,7 @@ impl Node {
     /// * `state_machine` - TODO: The game
     /// * `current_term` - The current term known by the node
     /// * `voted_for` - The ip address the current node believes to be the leader/hopes to elect as leader
+    /// * `voted` - Whether the node has voted in the current term
     /// * `log` - Vector of log entries
     /// * `connections`
     /// * `next_timeout`
@@ -42,6 +43,7 @@ impl Node {
             state_machine: HashMap::new(),
             current_term: 1,
             voted_for: None,
+            voted: false,
             log: Vec::new(),
             mailbox: mailbox,
             connections: HashMap::new(),
@@ -77,7 +79,7 @@ impl Node {
         ).collect()
     }
 
-    /// checks if a log entry (log_term, log_index) exceeds the current node's log term and index
+    /// returns whether the current node has a more up-to-date log than (log_term, log_index)
     fn log_newer_than(&self, log_term: u64, log_index: Option<u64>) -> bool {
         match log_index {
             None => self.log.len() > 0,
@@ -92,10 +94,16 @@ impl Node {
         }
     }
 
+    // if voted, then voted_for is the candidate the node voted for (or the leader, if it was elected)
+    // if not voted, then voted_for is the leader from the previous term
+    // if not voted and gets a valid vote request, update voted and voted_for to the candidate
+    // and once voted, cannot vote again in the given term
+    // to_follower occurs when a node finds out another node has a higher term
     fn to_follower(&mut self, term: u64) {
+        // TODO: should this also refresh timeouts?
         self.current_term = term;
         self.state = State::Follower;
-        self.voted_for = None; // What should this be?
+        self.voted = false;
     }
 
     // ------------------------------- CLIENT REQUESTS ------------------------
@@ -162,9 +170,7 @@ impl Node {
                                 .unwrap_or_else(|_| ());
                         }
                     } else if r.term > self.current_term {
-                        self.current_term = r.term;
-                        self.state = State::Follower;
-                        self.voted_for = None;
+                        self.to_follower(r.term);
                         return tx
                             .send(Ok(Response::new(GetResponse {
                                 value: 0,
@@ -252,18 +258,13 @@ impl Node {
                 },
             ));
 
-            // responses.push(tokio::spawn(
-            //     async move { client.append_entries(request).await },
-            // ));
         }
         while !responses.is_empty() {
             match select_all(responses).await {
                 (Ok((responder, last_sent_idx, Ok(res))), _, remaining) => {
                     let r = res.into_inner();
                     if r.term > self.current_term {
-                        self.current_term = r.term;
-                        self.state = State::Follower;
-                        self.voted_for = None;
+                        self.to_follower(r.term);
                         return;
                     }
                     // update matchIndex and nextIndex if successful
@@ -305,9 +306,7 @@ impl Node {
                 (Ok(Ok(res)), _, remaining) => {
                     let r = res.into_inner();
                     if r.term > self.current_term {
-                        self.current_term = r.term;
-                        self.state = State::Follower;
-                        self.voted_for = None;
+                        self.to_follower(r.term);
                         return;
                     }
                     responses = remaining
@@ -317,27 +316,28 @@ impl Node {
         }
     }
 
-    // Function for when a server receives an append entries request
+    /// Generates a response for request to append entries.
+    /// Failure response if request is from a stale term or the node's log is inconsistent.
+    /// Locates log inconsistencies and fixes them.
     pub fn handle_append_entries(
         &mut self,
         request: Request<AppendEntriesRequest>,
     ) -> Result<Response<AppendEntriesResponse>, Status> {
-        // Responds to an Append Entries Request.
-        // Sends a failure response if request is from a stale term
-        // Otherwise, checks log consistency and adds missing entries
+
         let req = request.into_inner();
         if req.term < self.current_term {
-            // mismatch_index unused in this case
+            // mismatch_index is unused in this case
             return self.respond_to_ae(false, self.log.len());
         }
+        // when receiving AE from current leader (node of same or higher term)
+        // revert to follower state, refresh timeout, and update known leader
         self.refresh_timeout();
-        if req.term > self.current_term {
-            self.state = State::Follower;
-            self.current_term = req.term;
-            self.voted_for = Some(req.leader_id); // sets leader to the with node with higher id?
-        }
-        if req.entries.len() == 0 {
-            // heartbeat: just respond immediately
+        self.state = State::Follower;
+        self.voted = true;
+        self.voted_for = Some(req.leader_id);
+
+        // heartbeat: just respond immediately
+        if req.entries.is_empty() {
             return self.respond_to_ae(true, self.log.len());
         }
         // next_i is the index of the first new entry to add to the log
@@ -425,9 +425,7 @@ impl Node {
                                 return;
                             }
                         } else if r.term > self.current_term {
-                            self.current_term = r.term;
-                            self.state = State::Follower;
-                            self.voted_for = None;
+                            self.to_follower(r.term);
                             return;
                         }
                         responses = remaining
@@ -437,29 +435,29 @@ impl Node {
             }
     }
 
+    /// Generate response to a Vote Request.
+    /// Sends a failure response if request is from a stale term, log out of date, or node already voted
     pub fn handle_request_vote(
         &mut self,
         request: Request<VoteRequest>,
     ) -> Result<Response<VoteResponse>, Status> {
-        // Respond to a Vote Request.
-        // Sends a failure response if request is from a stale term or if node has already voted
         let req = request.into_inner();
-        if req.term < self.current_term {
+
+        // stale term check
+        if req.term < self.current_term { return self.respond_to_vote(false); }
+
+        // when receives higher term vote req, follower updates term and voted status for a fresh election
+        // could receive reqs in a similar term, if multiple cands are running for election
+        // in both cases, only vote if hasn't voted yet and cand is more up to date
+        if req.term > self.current_term { self.to_follower(req.term); }
+        if self.voted || self.log_newer_than(req.last_log_term, req.last_log_index) {
             return self.respond_to_vote(false);
         }
-        if req.term > self.current_term {
-            self.state = State::Follower;
-            self.current_term = req.term;
-            self.voted_for = None;
-        }
-        let can_vote = match &self.voted_for {
-            None => true,
-            Some(id) => *id == req.candidate_id,
-        };
-        if !can_vote || self.log_newer_than(req.last_log_term, req.last_log_index) {
-            return self.respond_to_vote(false);
-        }
+
+        // refresh timeout upon granting vote to candidate
+        self.refresh_timeout();
         self.voted_for = Some(req.candidate_id);
+        self.voted = true;
         return self.respond_to_vote(true);
     }
 
