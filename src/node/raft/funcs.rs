@@ -135,6 +135,8 @@ impl Node {
         Err(Status::unimplemented("not implemented"))
     }
 
+    
+
     /// Recieves client request, verifies node's leadership by exchanging heartbeat
     /// to rest of cluster, then sends success or failure back to client
     ///
@@ -161,10 +163,9 @@ impl Node {
         let mut responses = Vec::new();
         for peer in &self.peers {
             // exchange heartbeats with majority of cluster
-            let (prev_log_index, prev_log_term) = match self.next_index.get(peer) {
-                None => (None, 0),
-                Some(a) => (Some(*a), self.log[*a as usize].term),
-            };
+            let prev_log_index = self.next_index.get(peer).unwrap();
+            let prev_log_term = self.log[*prev_log_index as usize].term;
+
             let mut client = match RaftRpcClient::connect(peer.clone()).await {
                 Err(_) => continue,
                 Ok(c) => c,
@@ -174,7 +175,7 @@ impl Node {
                 leader_id: self.id.clone(),
                 entries: Vec::new(),
                 leader_commit: self.commit_index,
-                prev_log_index: prev_log_index,
+                prev_log_index: *prev_log_index,
                 prev_log_term: prev_log_term,
             });
             responses.push(tokio::spawn(
@@ -364,16 +365,76 @@ impl Node {
         }
     }
 
+    async fn send_appendentries(&mut self) {
+        if self.state != State::Leader {
+            return;
+        }
+        let mut responses = Vec::new();
+        for peer in &self.peers {
+            let prev_log_index = self.next_index.get(peer).unwrap();
+            let prev_log_term = self.log[*prev_log_index as usize].term;
+
+            let mut client = match RaftRpcClient::connect(peer.clone()).await {
+                Err(_) => continue,
+                Ok(c) => c,
+            };
+            let request = Request::new(AppendEntriesRequest {
+                term: self.current_term,
+                leader_id: self.id.clone(),
+                entries: self.get_entries(&prev_log_term, prev_log_index),
+                leader_commit: self.commit_index,
+                prev_log_index: *prev_log_index,
+                prev_log_term: prev_log_term,
+            });
+            // responses.push(peer, commit_index, req)
+            let p = peer.clone();
+            let commit_idx = self.commit_index.clone();
+            responses.push(tokio::spawn(
+                async move { 
+                    (p, commit_idx, client.append_entries(request).await)
+                },
+            ));
+
+            // responses.push(tokio::spawn(
+            //     async move { client.append_entries(request).await },
+            // ));
+        }
+        while !responses.is_empty() {
+            match select_all(responses).await {
+                (Ok((responder, last_sent_idx, Ok(res))), _, remaining) => {
+                    let r = res.into_inner();
+                    if r.term > self.current_term {
+                        self.current_term = r.term;
+                        self.state = State::Follower;
+                        self.voted_for = None;
+                        return;
+                    }
+                    // update matchIndex and nextIndex if successful
+                    // both should be the last entry that was sent in request
+                    if r.success {
+                        self.match_index.entry(responder.to_string()).or_insert(last_sent_idx);
+                        self.next_index.entry(responder.to_string()).or_insert(last_sent_idx);
+                    } else {
+                        // failed due to log inconsistency
+                        // set nextindex to mismatch index
+                        self.next_index.entry(responder.to_string()).or_insert(r.mismatch_index);
+                    }
+                    responses = remaining
+                }
+                (_, _, remaining) => responses = remaining,
+            }
+        }
+    }
+
     async fn send_heartbeat(&mut self) {
         if self.state != State::Leader {
             return;
         }
         let mut responses = Vec::new();
         for peer in &self.peers {
-            let (prev_log_index, prev_log_term) = match self.next_index.get(peer) {
-                None => (None, 0),
-                Some(a) => (Some(*a), self.log[*a as usize].term),
-            };
+            let prev_log_index = self.next_index.get(peer).unwrap();
+            let prev_log_term = self.log[*prev_log_index as usize].term;
+
             let mut client = match RaftRpcClient::connect(peer.clone()).await {
                 Err(_) => continue,
                 Ok(c) => c,
@@ -383,7 +444,7 @@ impl Node {
                 leader_id: self.id.clone(),
                 entries: Vec::new(),
                 leader_commit: self.commit_index,
-                prev_log_index: prev_log_index,
+                prev_log_index: *prev_log_index,
                 prev_log_term: prev_log_term,
             });
             responses.push(tokio::spawn(
@@ -405,6 +466,12 @@ impl Node {
                 (_, _, remaining) => responses = remaining,
             }
         }
+    }
+
+    fn get_entries(&self, from_term : &u64, from_idx : &u64) -> Vec<LogEntry> {
+        self.log.iter().enumerate().filter({| (index, l) |
+                l.term > *from_term && *index > (*from_idx).try_into().unwrap()
+        }).into_iter().map( | (_index, l) | l.clone()).collect()
     }
 
     async fn start_leader(&mut self) {
@@ -459,10 +526,11 @@ impl Node {
         }))
     }
 
-    fn respond_to_ae(&self, success: bool) -> Result<Response<AppendEntriesResponse>, Status> {
+    fn respond_to_ae(&self, success: bool, mismatch_index: usize) -> Result<Response<AppendEntriesResponse>, Status> {
         Ok(Response::new(AppendEntriesResponse {
             term: self.current_term,
             success: success,
+            mismatch_index: mismatch_index.try_into().unwrap(),
         }))
     }
 
@@ -502,32 +570,42 @@ impl Node {
         // Otherwise, checks log consistency and adds missing entries
         let req = request.into_inner();
         if req.term < self.current_term {
-            return self.respond_to_ae(false);
+            // mismatch_index unused in this case
+            return self.respond_to_ae(false, self.log.len());
         }
         self.refresh_timeout();
         if req.term > self.current_term {
             self.state = State::Follower;
             self.current_term = req.term;
-            self.voted_for = Some(req.leader_id);
+            self.voted_for = Some(req.leader_id); // sets leader to the with node with higher id?
         }
         if req.entries.len() == 0 {
             // heartbeat: just respond immediately
-            return self.respond_to_ae(true);
+            return self.respond_to_ae(true, self.log.len());
         }
-        let (next_i, is_consistent) = match req.prev_log_index {
-            None => (0, true),
-            Some(i) => {
-                let i = i as usize;
-                (
-                    i + 1,
-                    i < self.log.len() && self.log[i].term == req.prev_log_term,
-                )
-            }
-        };
+        // next_i is the index of the first new entry to add to the log
+        // consistent (at least up until prev_log_term) if log is at least as many entries
+        // and the term matches (can prove inductively?) 
+        let i = req.prev_log_index as usize;
+        // if log missing entries, return log.len as mismatch index
+        // if not missing entries, then inconsistent starting from where term mismatch (prev log index)
+        // meaning leader should decrement next_index[peer]
+        let missing = !(i < self.log.len());
+        let (is_consistent, mismatch_idx) =
+            if missing {
+                (false, self.log.len())
+            } else if self.log[i].term != i.try_into().unwrap() {
+                (false, i)
+            } else {
+                (true, self.log.len())
+            };
         if !is_consistent {
-            return self.respond_to_ae(false);
+            return self.respond_to_ae(is_consistent, mismatch_idx)
         }
+
+        // add entries, replacing entries if node already has an entry at index
         let n = req.entries.len();
+        let next_i = i + 1;
         for j in 0..n {
             if next_i + j < self.log.len() {
                 self.log[next_i + j] = req.entries[j].clone();
@@ -536,12 +614,12 @@ impl Node {
             self.log.push(req.entries[j].clone());
         }
 
+        // update commit index
         if req.leader_commit > self.commit_index {
-            // not sure if this is correct
             self.commit_index = cmp::min(req.leader_commit, (self.log.len() - 1) as u64);
         }
 
-        return self.respond_to_ae(true);
+        return self.respond_to_ae(true, self.log.len());
     }
 }
 

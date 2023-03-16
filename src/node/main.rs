@@ -30,7 +30,7 @@ async fn main() {
     };
 
     // read from peers.txt to get the ip addresses of the other server nodes, ignoring its own address
-    // TODO: if line is empty, ignore
+    // assumes user is running from src
     let contents = fs::read_to_string("../data/peers.txt").expect("cannot read file");
     let peers: Vec<String> = contents
         .split("\n")
