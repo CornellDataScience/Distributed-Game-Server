@@ -34,10 +34,18 @@ impl Node {
             next_timeout: None,
             config: ServerConfig {
                 timeout: Duration::new(2, 0),
+                batch_size: 5,
+                batch_timeout: Duration::new(5, 0),
             },
             log: Vec::new(),
             mailbox: mailbox,
             connections: HashMap::new(),
+            batched_put_requests: Vec::new(),
+            batched_get_requests: Vec::new(),
+            batch_put_timeout: Some(Instant::now()),
+            batch_get_timeout: Some(Instant::now()),
+            batched_put_senders: Vec::new(),
+            batched_get_senders: Vec::new()
         }
     }
 
@@ -415,6 +423,7 @@ impl Node {
             if self.state != State::Leader {
                 return;
             }
+            
             tokio::time::sleep(Duration::from_millis(50)).await;
             self.send_heartbeat().await;
         }
@@ -543,6 +552,120 @@ impl Node {
 
         return self.respond_to_ae(true);
     }
+    
+    // fn snapshot(&self) -> (u64, Option<u64>, HashMap<String,i64>) {
+    //     (self.current_term, Some(self.commit_index), self.state_machine.clone())
+    // }
+
+    // async fn batching(&mut self) {
+    //     if self.state != State::Leader {
+    //         return;
+    //     }
+    //     let snap = self.snapshot();
+
+    //     let mut snapshot_log = Vec::<LogEntry>::new();
+    //     for (k, v) in snap.2{
+    //         let command = Command {
+    //             key: k,
+    //             value: v,
+    //         }; 
+    //         snapshot_log.push(LogEntry {
+    //             command: Some(command),
+    //             term: self.current_term,
+    //         });
+    //     }
+    //     for peer in &self.peers {
+    //         let mut client = match RaftRpcClient::connect(peer.clone()).await {
+    //             Err(_) => continue,
+    //             Ok(c) => c,
+    //         };
+    //         let request = Request::new(AppendEntriesRequest {
+    //             term: self.current_term,
+    //             leader_id: self.id.clone(),
+    //             entries: snapshot_log.clone(),
+    //             leader_commit: self.commit_index,
+    //             prev_log_index: snap.1,
+    //             prev_log_term: snap.0,
+    //         });
+    //         tokio::spawn(
+    //             async move { client.append_entries(request).await },
+    //         );
+    //     }
+    // }
+
+    async fn start_batched_put(&mut self) {
+        self.batch_put_timeout = Some(Instant::now());
+        loop {
+            let timeout = match self.batch_put_timeout {
+                Some(t) => t.elapsed() >= self.config.batch_timeout,
+                None => false
+            };
+            if self.batched_get_requests.len() > self.config.batch_size || timeout{
+                let log = Vec::<Command>::new();
+                for req in self.batched_put_requests {
+                    let command = Command {
+                        key: req.key,
+                        value: req.value
+                    };
+                    log.push(command)
+                };
+
+                //Change replicate to take in Vec<Command> instead of just Command
+                let result = self.replicate(log).await;
+                
+                for tx in self.batched_put_senders{ 
+                    tx.send(result)
+                    .unwrap_or_else(|_| ());
+                }
+
+                self.batched_put_requests = Vec::<PutRequest>::new();
+                self.batched_put_senders = Vec::<oneshot::Sender<Result<Response<PutResponse>, Status>>>::new();
+                self.batch_put_timeout = Some(Instant::now());
+            } 
+        }
+    }
+    
+    async fn handle_batched_put_request(
+        &mut self,
+        req: PutRequest,
+        tx: oneshot::Sender<Result<Response<PutResponse>, Status>>,
+    ) {
+        if self.state != State::Leader {
+            tx.send(Ok(Response::new(PutResponse {
+                success: false,
+                leader_id: self.voted_for.clone(),
+            })))
+            .unwrap_or_else(|_| ());
+            return;
+        }
+
+        self.batched_put_requests.push(req);
+        self.batched_put_senders.push(tx);
+    }
+
+    async fn start_batched_get(&mut self) {
+        
+    }
+    async fn handle_batched_get_request(
+        &mut self,
+        req: GetRequest,
+        tx: oneshot::Sender<Result<Response<GetResponse>, Status>>,
+    ) {
+
+        if self.state != State::Leader {
+            tx.send(Ok(Response::new(GetResponse {
+                value: 0, 
+                success: false,
+                leader_id: self.voted_for.clone(),
+            })))
+            .unwrap_or_else(|_| ());
+            return;
+        }
+
+        self.batched_get_requests.push(req);
+        self.batched_get_senders.push(tx);
+    }
+
 }
 
 #[cfg(test)]

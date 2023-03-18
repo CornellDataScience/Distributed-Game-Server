@@ -39,6 +39,8 @@ enum State {
 pub struct ServerConfig {
     /// Configurable settings for server
     pub timeout: Duration,
+    batch_size: usize,
+    batch_timeout: Duration,
 }
 
 #[allow(dead_code)]
@@ -68,4 +70,14 @@ pub struct Node {
 
     //connections to peers
     connections: HashMap<String, RaftRpcClient<Channel>>,
+
+    // to keep track of batched request
+    batched_put_requests:Vec<PutRequest>,
+    batch_put_timeout: Option<Instant>,
+    batched_put_senders: Vec<oneshot::Sender<Result<Response<PutResponse>, Status>>>,
+
+    batched_get_requests:Vec<GetRequest>,
+    batch_get_timeout: Option<Instant>,
+    batched_get_senders: Vec<oneshot::Sender<Result<Response<GetResponse>, Status>>>,
+
 }
