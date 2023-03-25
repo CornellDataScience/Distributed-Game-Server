@@ -19,7 +19,7 @@ impl Node {
     /// * `peers` - Vector of other nodes in the cluster
     /// * `mailbox` - Mailbox to collect incoming requests from other nodes
     ///
-    
+
     pub fn new(id: String, peers: Vec<String>, mailbox: mpsc::UnboundedReceiver<Event>) -> Self {
         Self {
             id: id,
