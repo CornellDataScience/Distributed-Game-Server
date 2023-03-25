@@ -600,7 +600,7 @@ impl Node {
                 Some(t) => t.elapsed() >= self.config.batch_timeout,
                 None => false
             };
-            if self.batched_get_requests.len() > self.config.batch_size || timeout{
+            if self.batched_put_requests.len() > self.config.batch_size || timeout{
                 let log = Vec::<Command>::new();
                 for req in self.batched_put_requests {
                     let command = Command {
@@ -644,7 +644,39 @@ impl Node {
     }
 
     async fn start_batched_get(&mut self) {
-        
+        self.batch_get_timeout = Some(Instant::now());
+        loop {
+            let timeout = match self.batch_get_timeout {
+                Some(t) => t.elapsed() >= self.config.batch_timeout,
+                None => false
+            };
+            if self.batched_get_requests.len() > self.config.batch_size || timeout{
+                let mut responses = Vec::new();
+                for peer in &self.peers {
+                    // exchange heartbeats with majority of cluster
+                    let (prev_log_index, prev_log_term) = match self.next_index.get(peer) {
+                        None => (None, 0),
+                        Some(a) => (Some(*a), self.log[*a as usize].term),
+                    };
+                    let mut client = match RaftRpcClient::connect(peer.clone()).await {
+                        Err(_) => continue,
+                        Ok(c) => c,
+                    };
+                    let request = Request::new(AppendEntriesRequest {
+                        term: self.current_term,
+                        leader_id: self.id.clone(),
+                        entries: Vec::new(),
+                        leader_commit: self.commit_index,
+                        prev_log_index: prev_log_index,
+                        prev_log_term: prev_log_term,
+                    });
+                    responses.push(tokio::spawn(
+                        async move { client.append_entries(request).await },
+                    ));
+                }
+                
+            } 
+        }
     }
     async fn handle_batched_get_request(
         &mut self,
