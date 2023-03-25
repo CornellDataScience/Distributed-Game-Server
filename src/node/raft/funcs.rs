@@ -19,6 +19,7 @@ impl Node {
     /// * `peers` - Vector of other nodes in the cluster
     /// * `mailbox` - Mailbox to collect incoming requests from other nodes
     ///
+    
     pub fn new(id: String, peers: Vec<String>, mailbox: mpsc::UnboundedReceiver<Event>) -> Self {
         Self {
             id: id,
@@ -148,7 +149,7 @@ impl Node {
     ///
     /// # Arguments
     /// `self` - Node recieving the client request
-    /// `req` - Request sent by client
+    /// `req` - Get request sent by client
     /// `tx` - GRPC transaction
     async fn handle_get_request(
         &mut self,
@@ -235,7 +236,7 @@ impl Node {
     ///
     /// # Arguments
     /// `self` - Node sending request
-    /// `req` - Request being sent
+    /// `req` - Put request being sent
     /// `tx` - GRPC Transaction
     async fn handle_put_request(
         &mut self,
@@ -553,46 +554,11 @@ impl Node {
         return self.respond_to_ae(true);
     }
     
-    // fn snapshot(&self) -> (u64, Option<u64>, HashMap<String,i64>) {
-    //     (self.current_term, Some(self.commit_index), self.state_machine.clone())
-    // }
-
-    // async fn batching(&mut self) {
-    //     if self.state != State::Leader {
-    //         return;
-    //     }
-    //     let snap = self.snapshot();
-
-    //     let mut snapshot_log = Vec::<LogEntry>::new();
-    //     for (k, v) in snap.2{
-    //         let command = Command {
-    //             key: k,
-    //             value: v,
-    //         }; 
-    //         snapshot_log.push(LogEntry {
-    //             command: Some(command),
-    //             term: self.current_term,
-    //         });
-    //     }
-    //     for peer in &self.peers {
-    //         let mut client = match RaftRpcClient::connect(peer.clone()).await {
-    //             Err(_) => continue,
-    //             Ok(c) => c,
-    //         };
-    //         let request = Request::new(AppendEntriesRequest {
-    //             term: self.current_term,
-    //             leader_id: self.id.clone(),
-    //             entries: snapshot_log.clone(),
-    //             leader_commit: self.commit_index,
-    //             prev_log_index: snap.1,
-    //             prev_log_term: snap.0,
-    //         });
-    //         tokio::spawn(
-    //             async move { client.append_entries(request).await },
-    //         );
-    //     }
-    // }
-
+    ////////////////////////////////////////////////////////////////////////////
+    // Batching below        
+    ////////////////////////////////////////////////////////////////////////////
+    
+    /// Send out batch when time is up or batch is filled
     async fn start_batched_put(&mut self) {
         self.batch_put_timeout = Some(Instant::now());
         loop {
@@ -610,7 +576,7 @@ impl Node {
                     log.push(command)
                 };
 
-                //Change replicate to take in Vec<Command> instead of just Command
+                // Change replicate to take in Vec<Command> instead of just Command
                 let result = self.replicate(log).await;
                 
                 for tx in self.batched_put_senders{ 
@@ -625,6 +591,7 @@ impl Node {
         }
     }
     
+    /// Add put requests to batch
     async fn handle_batched_put_request(
         &mut self,
         req: PutRequest,
@@ -643,6 +610,7 @@ impl Node {
         self.batched_put_senders.push(tx);
     }
 
+    /// Send out get request when time limit is exceeded or batch size is hit
     async fn start_batched_get(&mut self) {
         self.batch_get_timeout = Some(Instant::now());
         loop {
@@ -650,34 +618,23 @@ impl Node {
                 Some(t) => t.elapsed() >= self.config.batch_timeout,
                 None => false
             };
-            if self.batched_get_requests.len() > self.config.batch_size || timeout{
-                let mut responses = Vec::new();
-                for peer in &self.peers {
-                    // exchange heartbeats with majority of cluster
-                    let (prev_log_index, prev_log_term) = match self.next_index.get(peer) {
-                        None => (None, 0),
-                        Some(a) => (Some(*a), self.log[*a as usize].term),
+            if self.batched_get_requests.len() > self.config.batch_size || timeout {
+                while self.batched_get_senders.len() > 0  {
+                    let req = match self.batched_get_requests.pop() {
+                        Some(a) => a,
+                        None => break
                     };
-                    let mut client = match RaftRpcClient::connect(peer.clone()).await {
-                        Err(_) => continue,
-                        Ok(c) => c,
+                    let tx  = match self.batched_get_senders.pop() {
+                        Some(a) => a,
+                        None => break
                     };
-                    let request = Request::new(AppendEntriesRequest {
-                        term: self.current_term,
-                        leader_id: self.id.clone(),
-                        entries: Vec::new(),
-                        leader_commit: self.commit_index,
-                        prev_log_index: prev_log_index,
-                        prev_log_term: prev_log_term,
-                    });
-                    responses.push(tokio::spawn(
-                        async move { client.append_entries(request).await },
-                    ));
+                    self.handle_get_request(req, tx);
                 }
-                
-            } 
+            }    
         }
     }
+
+    /// Add get requests to batch
     async fn handle_batched_get_request(
         &mut self,
         req: GetRequest,
@@ -697,7 +654,6 @@ impl Node {
         self.batched_get_requests.push(req);
         self.batched_get_senders.push(tx);
     }
-
 }
 
 #[cfg(test)]
