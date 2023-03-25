@@ -10,7 +10,6 @@ pub mod raft_rpc {
     tonic::include_proto!("raftrpc");
 }
 
-
 pub struct Client {
     peers: Vec<String>,
     connections: HashMap<String, RaftRpcClient<Channel>>,
@@ -18,8 +17,8 @@ pub struct Client {
 }
 
 impl Client {
+    /// Creates a new client from a vector of server nodes
     pub fn new(peers: Vec<String>) -> Self {
-        /// Creates a new client from a vector of server nodes
         let mut connections = HashMap::new();
         peers.clone().into_iter().for_each(|ip| {
             connections.insert(ip.clone(), block_on(RaftRpcClient::connect(ip)).unwrap());
@@ -30,10 +29,9 @@ impl Client {
             current_leader: None,
         };
     }
-
+    /// If current leader unknown, finds the leader of the server by sending a
+    /// message to a random server in the cluster
     fn find_leader(&mut self) -> RaftRpcClient<Channel> {
-        /// If current leader unknown, finds the leader of the server by sending a
-        /// message to a random server in the cluster
         let dst_ip = &match &self.current_leader {
             None => {
                 let n = rand::thread_rng().gen_range(0..self.peers.len());
@@ -44,8 +42,8 @@ impl Client {
         self.connections.get(dst_ip).unwrap().clone()
     }
 
+    /// Gets the value of a key from the leader
     pub fn get(&mut self, key: String) -> i64 {
-        /// Gets the value of a key from the leader
         let mut dst = self.find_leader();
         let req = GetRequest { key: key.clone() };
         match block_on(dst.get(req)) {
@@ -61,8 +59,8 @@ impl Client {
         self.get(key)
     }
 
+    /// Pushes a key value pair to the leader
     pub fn put(&mut self, key: String, value: i64) -> bool {
-        /// Pushes a key value pair to the leader
         let mut dst = self.find_leader();
         let req = PutRequest {
             key: key.clone(),
