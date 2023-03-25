@@ -85,6 +85,7 @@ impl Node {
         }
     }
 
+    /// returns a vector of log entries which have index and term greater than from_idx and from_term
     fn get_entries(&self, from_term: &u64, from_idx: &u64) -> Vec<LogEntry> {
         self.log
             .iter()
@@ -226,7 +227,7 @@ impl Node {
             key: req.key,
             value: req.value,
         };
-        tx.send(self.replicate(Some(command)).await)
+        tx.send(self.replicate(vec!(Some(command))).await)
             .unwrap_or_else(|_| ());
     }
 
@@ -560,6 +561,11 @@ impl Node {
             if self.state != State::Leader {
                 return;
             }
+            // TODO: If last log index ≥ nextIndex for a follower: send
+            // AppendEntries RPC with log entries starting at nextIndex
+            // If there exists an N such that N > commitIndex, a majority
+            // of matchIndex[i] ≥ N, and log[N].term == currentTerm:
+            // set commitIndex = N (§5.3, §5.4).
             tokio::time::sleep(Duration::from_millis(50)).await;
             self.send_heartbeat().await;
         }
@@ -606,74 +612,29 @@ impl Node {
     ///
     async fn replicate(
         &mut self,
-        command: Option<Command>,
+        commands: Vec<Option<Command>>,
     ) -> Result<Response<PutResponse>, Status> {
-        self.log.push(LogEntry {
-            command: command,
-            term: self.current_term,
-        });
-        println!("{} is replicating command", self.id);
-        // let mut requests = Vec::new();
-        // let mut responses = Vec::new();
-        // for peer in &self.peers {
-        //     let (prev_log_index, prev_log_term) = match self.next_index.get(peer) {
-        //         None => (None, 0),
-        //         Some(a) => (Some(*a), self.log[*a as usize].term),
-        //     };
-        //     let mut client = match RaftClient::connect(peer.clone()).await {
-        //         Err(_) => continue,
-        //         Ok(c) => c,
-        //     };
-        //     let request = AppendEntriesRequest {
-        //         term: self.current_term,
-        //         leader_id: self.id.clone(),
-        //         entries: Vec::new(),
-        //         leader_commit: self.commit_index,
-        //         prev_log_index: prev_log_index,
-        //         prev_log_term: prev_log_term,
-        //     };
-        //     responses.push(tokio::spawn(async move {
-        //         client.append_entries(Request::new(request)).await
-        //     }));
-        //     requests.push((peer.clone(), request));
-        // }
-        // while !responses.is_empty() {
-        //     match select_all(responses).await {
-        //         (Ok(Ok(res)), i, remaining) => {
-        //             let r = res.into_inner();
-        //             if !r.success {
-        //                 let mut client = match RaftClient::connect(requests[i].0.clone()).await {
-        //                     Err(_) => continue,
-        //                     Ok(c) => c,
-        //                 };
-        //                 let req = &requests[i].1;
-        //                 // req.prev_log_index = match req.prev_log_index {
-        //                 //     None => None,
-        //                 //     Some(0) => None,
-        //                 //     Some(i) => Some(i - 1),
-        //                 // };
-        //                 responses.push(tokio::spawn(async move {
-        //                     client
-        //                         .append_entries(Request::new(requests[i].1.clone()))
-        //                         .await
-        //                 }));
-        //             }
-        //             if r.term > self.current_term {
-        //                 self.current_term = r.term;
-        //                 self.state = State::Follower;
-        //                 self.voted_for = None;
-        //                 return Ok(Response::new(PutResponse {
-        //                     success: false,
-        //                     leader_id: None,
-        //                 }));
-        //             }
-        //             responses = remaining
-        //         }
-        //         (_, _, remaining) => responses = remaining,
-        //     }
-        // }
+        // If command received from client: append entry to local log,
+        // respond after entry applied to state machine (§5.3)
+        // which is once the command has been committed
 
-        Err(Status::unimplemented("not implemented"))
+        // push entries onto log
+        for command in commands {
+            self.log.push(LogEntry {
+                command: command,
+                term: self.current_term,
+            });
+        }
+
+        // TODO: will this loop cause things to stall?
+        let req_idx = self.log.len() - 1;
+        // keep send ae until req committed
+        while self.commit_index < req_idx as u64 {
+            println!("{} is replicating command", self.id);
+            self.send_append_entries().await;
+        }
+
+        Ok(Response::new(PutResponse { success: true, leader_id: Some(self.id.to_string()) }))
     }
 }
 
