@@ -1,14 +1,20 @@
-use std::{collections::HashMap, time::{Duration, Instant}, cmp};
+use std::{
+    cmp,
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
-use futures::{future::select_all, executor::block_on};
+use futures::{executor::block_on, future::select_all};
 use rand::Rng;
 use tokio::sync::{mpsc, oneshot};
-use tonic::{Response, Status, Request};
+use tonic::{Request, Response, Status};
 
-use crate::node::raft_rpcs::{GetRequest, GetResponse, raft_rpc_client::RaftRpcClient, AppendEntriesRequest, PutRequest, PutResponse, Command, VoteRequest, VoteResponse, AppendEntriesResponse, LogEntry};
+use crate::node::raft_rpcs::{
+    raft_rpc_client::RaftRpcClient, AppendEntriesRequest, AppendEntriesResponse, Command,
+    GetRequest, GetResponse, LogEntry, PutRequest, PutResponse, VoteRequest, VoteResponse,
+};
 
-use super::{State, Event, ServerConfig, Node};
-
+use super::{Event, Node, ServerConfig, State};
 
 #[allow(dead_code)]
 impl Node {
@@ -21,7 +27,7 @@ impl Node {
     /// * `last_applied` - The highest index of the log entry applied to the state machine
     /// * `peers` - Vector of ip addresses of other nodes in the cluster
     /// * `state_machine` - TODO: The game
-    /// * `current_term` - The current term known by the node
+    /// * `current_term` - The current term known by the node. Starts at 1
     /// * `voted_for` - The ip address the current node believes to be the leader/hopes to elect as leader
     /// * `voted` - Whether the node has voted in the current term
     /// * `log` - Vector of log entries
@@ -30,7 +36,8 @@ impl Node {
     /// * `config`
     /// * `mailbox` - Mailbox to collect incoming requests from other nodes
     /// ## Leader Only
-    /// * `next_index` - The index of the next log entry a leader should send to the follower
+    /// * `next_index` - The index of the next log entry a leader should send to the follower.
+    ///        in AE, prev_log_index will be None if leader had never sent an AE to the follower
     /// * `match_index` - The highest index log entry where a follower is consistent with the leader
 
     pub fn new(id: String, peers: Vec<String>, mailbox: mpsc::UnboundedReceiver<Event>) -> Self {
@@ -44,7 +51,14 @@ impl Node {
             current_term: 1,
             voted_for: None,
             voted: false,
-            log: Vec::new(),
+            // dummy entry to make computations easier
+            log: vec![LogEntry {
+                command: Some(Command {
+                    key: "$".to_string(),
+                    value: 0,
+                }),
+                term: 0,
+            }],
             mailbox: mailbox,
             connections: HashMap::new(),
             next_timeout: None,
@@ -71,27 +85,23 @@ impl Node {
         }
     }
 
-    fn get_entries(&self, from_term : &u64, from_idx : &u64) -> Vec<LogEntry> {
-        self.log.iter().enumerate().filter({| (index, l) |
-            l.term > *from_term && *index > (*from_idx).try_into().unwrap()
-        }).into_iter().map( | (_index, l) |
-            l.clone()
-        ).collect()
+    fn get_entries(&self, from_term: &u64, from_idx: &u64) -> Vec<LogEntry> {
+        self.log
+            .iter()
+            .enumerate()
+            .filter({
+                |(index, l)| l.term > *from_term && *index > (*from_idx).try_into().unwrap()
+            })
+            .into_iter()
+            .map(|(_index, l)| l.clone())
+            .collect()
     }
 
     /// returns whether the current node has a more up-to-date log than (log_term, log_index)
-    fn log_newer_than(&self, log_term: u64, log_index: Option<u64>) -> bool {
-        match log_index {
-            None => self.log.len() > 0,
-            Some(i) => {
-                if self.log.len() == 0 {
-                    return false;
-                }
-                let last_index = self.log.len() - 1;
-                let last_term = self.log[last_index].term;
-                return last_term > log_term || (last_term == log_term && last_index as u64 >= i);
-            }
-        }
+    fn log_newer_than(&self, log_term: u64, log_index: u64) -> bool {
+        let last_index = self.log.len() - 1;
+        let last_term = self.log[last_index].term;
+        last_term > log_term || (last_term == log_term && last_index as u64 > log_index)
     }
 
     // if voted, then voted_for is the candidate the node voted for (or the leader, if it was elected)
@@ -223,11 +233,14 @@ impl Node {
     // --------------------------- APPEND ENTRIES -----------------------------
 
     fn gen_ae_request(&self, peer: &String, heartbeat: bool) -> Request<AppendEntriesRequest> {
-        let prev_log_index = self.next_index.get(peer).unwrap();
+        let prev_log_index = self.next_index.get(peer).unwrap_or_else(|| {&0});
         let prev_log_term = self.log[*prev_log_index as usize].term;
 
-        let entries = if heartbeat { Vec::new() }
-            else { self.get_entries(&prev_log_term, prev_log_index) };
+        let entries = if heartbeat {
+            Vec::new()
+        } else {
+            self.get_entries(&prev_log_term, prev_log_index)
+        };
 
         Request::new(AppendEntriesRequest {
             term: self.current_term,
@@ -240,7 +253,9 @@ impl Node {
     }
 
     async fn send_append_entries(&mut self) {
-        if self.state != State::Leader { return; }
+        if self.state != State::Leader {
+            return;
+        }
         let mut responses = Vec::new();
         for peer in &self.peers {
             let mut client = match RaftRpcClient::connect(peer.clone()).await {
@@ -251,17 +266,13 @@ impl Node {
             let request = self.gen_ae_request(peer, false);
 
             let p = peer.clone();
-            let commit_idx = self.commit_index.clone();
-            responses.push(tokio::spawn(
-                async move { 
-                    (p, commit_idx, client.append_entries(request).await)
-                },
-            ));
-
+            responses.push(tokio::spawn(async move {
+                (p, client.append_entries(request).await)
+            }));
         }
         while !responses.is_empty() {
             match select_all(responses).await {
-                (Ok((responder, last_sent_idx, Ok(res))), _, remaining) => {
+                (Ok((responder, Ok(res))), _, remaining) => {
                     let r = res.into_inner();
                     if r.term > self.current_term {
                         self.to_follower(r.term);
@@ -270,12 +281,18 @@ impl Node {
                     // update matchIndex and nextIndex if successful
                     // both should be the last entry that was sent in request
                     if r.success {
-                        self.match_index.entry(responder.to_string()).or_insert(last_sent_idx);
-                        self.next_index.entry(responder.to_string()).or_insert(last_sent_idx);
+                        self.match_index
+                            .entry(responder.to_string())
+                            .or_insert(self.log.len() as u64); // assume no entries added since sending request
+                        self.next_index
+                            .entry(responder.to_string())
+                            .or_insert(self.log.len() as u64);
                     } else {
                         // failed due to log inconsistency
                         // set nextindex to mismatch index
-                        self.next_index.entry(responder.to_string()).or_insert(r.mismatch_index);
+                        self.next_index
+                            .entry(responder.to_string())
+                            .or_insert(r.mismatch_index.unwrap());
                     }
                     responses = remaining
                 }
@@ -323,41 +340,41 @@ impl Node {
         &mut self,
         request: Request<AppendEntriesRequest>,
     ) -> Result<Response<AppendEntriesResponse>, Status> {
-
         let req = request.into_inner();
         if req.term < self.current_term {
-            // mismatch_index is unused in this case
-            return self.respond_to_ae(false, self.log.len());
+            return self.respond_to_ae(false, None);
         }
         // when receiving AE from current leader (node of same or higher term)
         // revert to follower state, refresh timeout, and update known leader
         self.refresh_timeout();
+        self.current_term = req.term;
         self.state = State::Follower;
         self.voted = true;
         self.voted_for = Some(req.leader_id);
 
         // heartbeat: just respond immediately
         if req.entries.is_empty() {
-            return self.respond_to_ae(true, self.log.len());
+            return self.respond_to_ae(true, None);
         }
+
         // next_i is the index of the first new entry to add to the log
         // consistent (at least up until prev_log_term) if log is at least as many entries
-        // and the term matches (can prove inductively?) 
+        // and the term matches (can prove inductively?)
         let i = req.prev_log_index as usize;
-        // if log missing entries, return log.len as mismatch index
+        let t = req.prev_log_term;
+        // if log missing entries, return log.len-1 as mismatch index
         // if not missing entries, then inconsistent starting from where term mismatch (prev log index)
         // meaning leader should decrement next_index[peer]
-        let missing = !(i < self.log.len());
-        let (is_consistent, mismatch_idx) =
-            if missing {
-                (false, self.log.len())
-            } else if self.log[i].term != i.try_into().unwrap() {
-                (false, i)
-            } else {
-                (true, self.log.len())
-            };
+        let missing = i > self.log.len() - 1;
+        let (is_consistent, mismatch_idx) = if missing {
+            (false, Some(self.log.len()))
+        } else if self.log[i].term != t {
+            (false, Some(i))
+        } else {
+            (true, None)
+        };
         if !is_consistent {
-            return self.respond_to_ae(is_consistent, mismatch_idx)
+            return self.respond_to_ae(is_consistent, mismatch_idx);
         }
 
         // add entries, replacing entries if node already has an entry at index
@@ -371,19 +388,26 @@ impl Node {
             self.log.push(req.entries[j].clone());
         }
 
+        // remove entries past next_i+n, if they exist
+        for _ in 0..(next_i+n - self.log.len()) { self.log.pop(); }
+
         // update commit index
         if req.leader_commit > self.commit_index {
             self.commit_index = cmp::min(req.leader_commit, (self.log.len() - 1) as u64);
         }
 
-        return self.respond_to_ae(true, self.log.len());
+        return self.respond_to_ae(true, None);
     }
 
-    fn respond_to_ae(&self, success: bool, mismatch_index: usize) -> Result<Response<AppendEntriesResponse>, Status> {
+    fn respond_to_ae(
+        &self,
+        success: bool,
+        mismatch_index: Option<usize>,
+    ) -> Result<Response<AppendEntriesResponse>, Status> {
         Ok(Response::new(AppendEntriesResponse {
             term: self.current_term,
             success: success,
-            mismatch_index: mismatch_index.try_into().unwrap(),
+            mismatch_index: match mismatch_index { None => None, Some(i) => Some(i as u64)},
         }))
     }
 
@@ -391,48 +415,45 @@ impl Node {
 
     async fn send_vote_request(&mut self) {
         let mut responses = Vec::new();
-            for peer in &self.peers {
-                let mut client = match RaftRpcClient::connect(peer.clone()).await {
-                    Err(_) => continue,
-                    Ok(c) => c,
-                };
-                let (last_log_idx, last_term) = match self.log.len() {
-                    0 => (None, 0),
-                    i => (Some(i as u64), self.log[i - 1].term),
-                };
-                let mut request = Request::new(VoteRequest {
-                    term: self.current_term,
-                    candidate_id: self.id.clone(),
-                    last_log_index: last_log_idx,
-                    last_log_term: last_term,
-                });
-                request.set_timeout(Duration::from_secs(1));
-                responses.push(tokio::spawn(
-                    async move { client.request_vote(request).await },
-                ));
-            }
+        for peer in &self.peers {
+            let mut client = match RaftRpcClient::connect(peer.clone()).await {
+                Err(_) => continue,
+                Ok(c) => c,
+            };
+            let (last_log_idx, last_term) = ((self.log.len()-1) as u64, self.log[self.log.len() - 1].term);
+            let mut request = Request::new(VoteRequest {
+                term: self.current_term,
+                candidate_id: self.id.clone(),
+                last_log_index: last_log_idx,
+                last_log_term: last_term,
+            });
+            request.set_timeout(Duration::from_secs(1));
+            responses.push(tokio::spawn(
+                async move { client.request_vote(request).await },
+            ));
+        }
 
-            // Check if the majority of the votes are received, change state
-            let mut num_votes = 1;
-            while !responses.is_empty() {
-                match select_all(responses).await {
-                    (Ok(Ok(res)), _, remaining) => {
-                        let r = res.into_inner();
-                        if r.vote_granted {
-                            num_votes += 1;
-                            if num_votes > (self.peers.len() + 1) / 2 {
-                                self.state = State::Leader;
-                                return;
-                            }
-                        } else if r.term > self.current_term {
-                            self.to_follower(r.term);
+        // Check if the majority of the votes are received, change state
+        let mut num_votes = 1;
+        while !responses.is_empty() {
+            match select_all(responses).await {
+                (Ok(Ok(res)), _, remaining) => {
+                    let r = res.into_inner();
+                    if r.vote_granted {
+                        num_votes += 1;
+                        if num_votes > (self.peers.len() + 1) / 2 {
+                            self.state = State::Leader;
                             return;
                         }
-                        responses = remaining
+                    } else if r.term > self.current_term {
+                        self.to_follower(r.term);
+                        return;
                     }
-                    (_, _, remaining) => responses = remaining,
+                    responses = remaining
                 }
+                (_, _, remaining) => responses = remaining,
             }
+        }
     }
 
     /// Generate response to a Vote Request.
@@ -444,12 +465,16 @@ impl Node {
         let req = request.into_inner();
 
         // stale term check
-        if req.term < self.current_term { return self.respond_to_vote(false); }
+        if req.term < self.current_term {
+            return self.respond_to_vote(false);
+        }
 
         // when receives higher term vote req, follower updates term and voted status for a fresh election
         // could receive reqs in a similar term, if multiple cands are running for election
         // in both cases, only vote if hasn't voted yet and cand is more up to date
-        if req.term > self.current_term { self.to_follower(req.term); }
+        if req.term > self.current_term {
+            self.to_follower(req.term);
+        }
         if self.voted || self.log_newer_than(req.last_log_term, req.last_log_index) {
             return self.respond_to_vote(false);
         }
@@ -483,10 +508,8 @@ impl Node {
             Event::AppendEntries { req, tx } => tx
                 .send(self.handle_append_entries(tonic::Request::new(req)))
                 .unwrap_or_else(|_| ()),
-            Event::ClientGetRequest { req, tx } =>
-                return self.handle_get_request(req, tx).await,
-            Event::ClientPutRequest { req, tx } =>
-                return self.handle_put_request(req, tx).await,
+            Event::ClientGetRequest { req, tx } => return self.handle_get_request(req, tx).await,
+            Event::ClientPutRequest { req, tx } => return self.handle_put_request(req, tx).await,
         }
     }
 
@@ -652,7 +675,6 @@ impl Node {
 
         Err(Status::unimplemented("not implemented"))
     }
-
 }
 
 #[cfg(test)]

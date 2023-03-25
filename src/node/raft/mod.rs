@@ -1,9 +1,15 @@
-use std::{time::{Duration, Instant}, collections::HashMap};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
-use tokio::sync::{oneshot, mpsc};
+use tokio::sync::{mpsc, oneshot};
 use tonic::{transport::Channel, Response, Status};
 
-use super::raft_rpcs::{VoteRequest, VoteResponse, AppendEntriesRequest, PutRequest, AppendEntriesResponse, PutResponse, GetRequest, GetResponse, LogEntry, raft_rpc_client::RaftRpcClient};
+use super::raft_rpcs::{
+    raft_rpc_client::RaftRpcClient, AppendEntriesRequest, AppendEntriesResponse, GetRequest,
+    GetResponse, LogEntry, PutRequest, PutResponse, VoteRequest, VoteResponse,
+};
 mod funcs;
 
 #[derive(Debug)]

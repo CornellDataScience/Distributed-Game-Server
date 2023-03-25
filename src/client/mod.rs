@@ -10,7 +10,6 @@ pub mod raft_rpc {
     tonic::include_proto!("raftrpc");
 }
 
-
 pub struct Client {
     peers: Vec<String>,
     connections: HashMap<String, RaftRpcClient<Channel>>,
@@ -42,7 +41,7 @@ impl Client {
         };
         self.connections.get(dst_ip).unwrap().clone()
     }
-    
+
     /// Gets the value of a key from the leader
     pub fn get(&mut self, key: String) -> i64 {
         let mut dst = self.find_leader();

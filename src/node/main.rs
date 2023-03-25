@@ -1,5 +1,5 @@
-use local_ip_address::local_ip;
 use digs::node::{raft, rpc};
+use local_ip_address::local_ip;
 use std::{env, fs, io, net::SocketAddr};
 use tokio::sync::mpsc;
 
@@ -20,7 +20,7 @@ async fn main() {
     if args.len() == 3 && args[2] == "localhost" {
         server_addr = String::from("[::1]") + &port;
     }
-    println!("{:?}",server_addr.parse::<SocketAddr>());
+    println!("{:?}", server_addr.parse::<SocketAddr>());
     let socket = match server_addr.parse::<SocketAddr>() {
         Err(e) => {
             println!("could not parse IP {server_addr}: {e}");
