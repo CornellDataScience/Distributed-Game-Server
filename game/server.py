@@ -1,6 +1,5 @@
 import socket
-import threading
-import sys
+import time
 import pickle
 
 def ip():
@@ -17,36 +16,36 @@ class Server:
         self.port = 60000
 
     def session(self, conns):
-        snake1, snake2 = [],[]
         while self.status:
-            snake1 = conns[0].recv(1024)
-            snake2 = conns[1].recv(1024)
-            print(snake1,snake2)
-            if not snake1 or not snake2:
-                break
+            # if not snake1 or not snake2:
+            #     break
+            recvm = []
+            snake_data = []
+            for i in range(self.players):
+                recvm.append(conns[i].recv(1024))
+            for i in range(self.players):
+                snake = pickle.loads(recvm[i])
+                snake_data.append(snake)
 
-            snake1 = pickle.loads(snake1)
-            snake2 = pickle.loads(snake2)
-            snake1 = pickle.dumps(snake1)
-            snake2 = pickle.dumps(snake2)
-
-            conns[0].sendall(snake2)
-            conns[1].sendall(snake1)
+            for i in range(len(conns)):
+                conns[i].sendall(pickle.dumps(snake_data[:i]+snake_data[i+1:]))
 
     def start(self):
         self.status = True
         self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.s.bind((ip(), self.port))
         self.s.listen(5)
+        self.players = 2
         print("Game server running...")
         while self.status:
             conns = []
-            # waits for 4 connections to server
-            for _ in range(2):
+            # waits for player connections to server
+            for _ in range(self.players):
                 conn, addr = self.s.accept()
                 print("Connected to server: ", addr)
                 conns.append(conn)
             print(conns)
+            time.sleep(3)
             self.session(conns)
             # ts = threading.Thread(target=self.session, args = (conns,))
             # ts.start()

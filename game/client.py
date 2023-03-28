@@ -65,18 +65,19 @@ class Snake:
                 if self.dir == "right":
                     self.snake[i][0]+=1
     
-    def check_collision(self, snake, enemy):
+    def check_collision(self, snake, enemies):
         head = snake[-1]
         if head[0] < 0 or head[0] >= self.grid_size or head[1] < 0 or head[1] >= self.grid_size:
             return True
         for i, loc in enumerate(snake):
             if head == loc and i != len(snake)-1: return True
-        for loc in enemy:
-            if head == loc: return True
+        for enemy in enemies:
+            for loc in enemy:
+                if head == loc: return True
         return False
 
     def loop(self):
-        fps = 10   
+        fps = 10  
         t = time.time()
         while self.running:
             for event in pygame.event.get():
@@ -90,10 +91,11 @@ class Snake:
                 if not self.endgame: self.move_snake()
                 self.draw_snake(self.snake, self.blue)
                 self.sc.send(self.snake)
-                self.enemy = self.sc.recv()
-                self.draw_snake(self.enemy, self.red)
+                self.enemies = self.sc.recv()
+                for e in self.enemies:
+                    self.draw_snake(e, self.red)
                 # print(self.enemy)
-                if self.check_collision(self.snake, self.enemy): 
+                if self.check_collision(self.snake, self.enemies): 
                     self.endgame = True
                 pygame.display.flip()
                 t = time.time()
