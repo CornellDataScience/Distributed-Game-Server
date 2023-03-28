@@ -25,13 +25,15 @@ class Snake:
         self.sc = Client(host, port)
         self.sc.connect()
         self.running = True
-        self.grid = [["." for j in range(50)] for i in range(50)]
+        self.grid_size = 50
+        self.display_size = 600
         self.snake = self.spawn()
         self.dir = "up"
         self.blue = (0, 0, 255)
         self.red = (255, 0, 0)
+        self.endgame = False
         pygame.init()
-        self.display = pygame.display.set_mode((600,600))
+        self.display = pygame.display.set_mode((self.display_size,self.display_size))
         self.loop()
 
     def spawn(self):
@@ -44,8 +46,9 @@ class Snake:
 
 
     def draw_snake(self, snake, color):
+        ratio = self.display_size // self.grid_size
         for x,y in snake:
-            pygame.draw.rect(self.display,color,(12*x,12*y,12,12))
+            pygame.draw.rect(self.display,color,(ratio*x,ratio*y,ratio,ratio))
 
 
     def move_snake(self):
@@ -61,6 +64,16 @@ class Snake:
                     self.snake[i][0]-=1
                 if self.dir == "right":
                     self.snake[i][0]+=1
+    
+    def check_collision(self, snake, enemy):
+        head = snake[-1]
+        if head[0] < 0 or head[0] >= self.grid_size or head[1] < 0 or head[1] >= self.grid_size:
+            return True
+        for i, loc in enumerate(snake):
+            if head == loc and i != len(snake)-1: return True
+        for loc in enemy:
+            if head == loc: return True
+        return False
 
     def loop(self):
         fps = 10   
@@ -74,12 +87,14 @@ class Snake:
             if time.time()-t >= 1/fps:
                 self.display.fill((0, 0, 0))
                 # print(self.snake)
-                self.move_snake()
+                if not self.endgame: self.move_snake()
                 self.draw_snake(self.snake, self.blue)
                 self.sc.send(self.snake)
                 self.enemy = self.sc.recv()
                 self.draw_snake(self.enemy, self.red)
                 # print(self.enemy)
+                if self.check_collision(self.snake, self.enemy): 
+                    self.endgame = True
                 pygame.display.flip()
                 t = time.time()
 
