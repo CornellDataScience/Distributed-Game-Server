@@ -1,7 +1,8 @@
 #[macro_use] extern crate rocket;
 use rocket::State;
-use std::sync::{Arc, Mutex};
 use std::collections::HashSet;
+use std::fs;
+use std::sync::{Arc, Mutex};
 
 // Stole code from https://github.com/SergioBenitez/Rocket/issues/478
 
@@ -13,7 +14,13 @@ type PeersStatePointer = Arc<Mutex<PeersState>>;
 
 impl PeersState {
     fn new() -> PeersStatePointer {
-        Arc::new(Mutex::new(PeersState { peers: HashSet::new() }))
+        let contents = fs::read_to_string("data/peers.txt")
+            .expect("cannot read file");
+        let peers: HashSet<String> = contents
+            .split("\n")
+            .map(|addr| String::from(addr))
+            .collect();
+        Arc::new(Mutex::new(PeersState { peers: peers }))
     }
 }
 
