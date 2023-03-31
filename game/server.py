@@ -35,7 +35,7 @@ class Server:
         self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.s.bind((ip(), self.port))
         self.s.listen(5)
-        self.players = 2
+        self.players = 7
         print("Game server running...")
         while self.status:
             conns = []
