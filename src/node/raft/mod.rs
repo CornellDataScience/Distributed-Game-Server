@@ -57,6 +57,7 @@ pub struct Node {
     voted_for: Option<String>,
     log: Vec<LogEntry>,
     next_timeout: Option<Instant>,
+    timeout: Instant,
     config: ServerConfig,
 
     // volatile leader state
