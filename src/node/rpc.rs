@@ -1,8 +1,8 @@
 use super::raft::Event;
 use super::raft_rpcs::GetRequest;
 use super::raft_rpcs::{
-    raft_rpc_server::RaftRpc, raft_rpc_server::RaftRpcServer, AppendEntriesRequest, AppendEntriesResponse,
-    GetResponse, PutRequest, PutResponse, VoteRequest, VoteResponse,
+    raft_rpc_server::RaftRpc, raft_rpc_server::RaftRpcServer, AppendEntriesRequest,
+    AppendEntriesResponse, GetResponse, PutRequest, PutResponse, VoteRequest, VoteResponse,
 };
 use std::error::Error;
 use std::net::SocketAddr;
