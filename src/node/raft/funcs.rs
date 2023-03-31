@@ -559,11 +559,11 @@ impl Node {
 
         return self.respond_to_ae(true);
     }
-    
+
     ////////////////////////////////////////////////////////////////////////////
-    // Batching below        
+    // Batching below
     ////////////////////////////////////////////////////////////////////////////
-    
+
     /// Send out batch when time is up or batch is filled
     async fn start_batched_put(&mut self) {
         self.batch_put_timeout = Some(Instant::now());
@@ -625,19 +625,18 @@ impl Node {
                 None => false,
             };
             if self.batched_get_requests.len() > self.config.batch_size || timeout {
-                while self.batched_get_senders.len() > 0  {
+                while self.batched_get_senders.len() > 0 {
                     let req = match self.batched_get_requests.pop() {
                         Some(a) => a,
-                        None => break
+                        None => break,
                     };
-                    let tx  = match self.batched_get_senders.pop() {
+                    let tx = match self.batched_get_senders.pop() {
                         Some(a) => a,
-                        None => break
+                        None => break,
                     };
                     self.handle_get_request(req, tx);
                 }
             }
-            }    
         }
     }
 
