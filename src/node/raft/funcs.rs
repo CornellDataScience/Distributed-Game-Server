@@ -25,6 +25,7 @@ impl Node {
             state: State::Follower,
             commit_index: 0,
             last_applied: 0,
+            timeout: Instant::now(),
             peers: peers,
             state_machine: HashMap::new(),
             next_index: HashMap::new(),
@@ -132,7 +133,7 @@ impl Node {
         //     }
         // }
 
-        Err(Status::unimplemented("not implemented"))
+        todo!()
     }
 
     /// Recieves client request, verifies node's leadership by exchanging heartbeat
@@ -270,7 +271,7 @@ impl Node {
 
     pub fn refresh_timeout(self: &mut Self) {
         let mut rng = rand::thread_rng();
-        let num = rng.gen_range(300..1000);
+        let num = rng.gen_range(150..300);
         self.next_timeout = Some(Instant::now() + Duration::from_millis(num));
     }
 
@@ -287,6 +288,7 @@ impl Node {
         loop {
             if self.timed_out() {
                 self.state = State::Candidate;
+                self.timeout = Instant::now();
                 return;
             }
             match self.mailbox.try_recv() {
@@ -408,7 +410,8 @@ impl Node {
     }
 
     async fn start_leader(&mut self) {
-        println!("starting leader in term {:?}", self.current_term);
+        println!("starting leader in term {:?}, time elapsed {:?}", self.current_term, self.timeout.elapsed());
+        self.timeout = Instant::now();
         // commit no-op entry at the start of term
         // self.replicate(None);
         loop {
