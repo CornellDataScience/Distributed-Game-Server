@@ -1,9 +1,15 @@
-use std::{time::{Duration, Instant}, collections::HashMap};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
-use tokio::sync::{oneshot, mpsc};
+use tokio::sync::{mpsc, oneshot};
 use tonic::{transport::Channel, Response, Status};
 
-use super::raft_rpcs::{VoteRequest, VoteResponse, AppendEntriesRequest, PutRequest, AppendEntriesResponse, PutResponse, GetRequest, GetResponse, LogEntry, raft_rpc_client::RaftRpcClient};
+use super::raft_rpcs::{
+    raft_rpc_client::RaftRpcClient, AppendEntriesRequest, AppendEntriesResponse, GetRequest,
+    GetResponse, LogEntry, PutRequest, PutResponse, VoteRequest, VoteResponse,
+};
 mod funcs;
 
 #[derive(Debug)]
@@ -72,12 +78,11 @@ pub struct Node {
     connections: HashMap<String, RaftRpcClient<Channel>>,
 
     // to keep track of batched request
-    batched_put_requests:Vec<PutRequest>,
+    batched_put_requests: Vec<PutRequest>,
     batch_put_timeout: Option<Instant>,
     batched_put_senders: Vec<oneshot::Sender<Result<Response<PutResponse>, Status>>>,
 
-    batched_get_requests:Vec<GetRequest>,
+    batched_get_requests: Vec<GetRequest>,
     batch_get_timeout: Option<Instant>,
     batched_get_senders: Vec<oneshot::Sender<Result<Response<GetResponse>, Status>>>,
-
 }

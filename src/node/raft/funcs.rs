@@ -1,14 +1,20 @@
-use std::{collections::HashMap, time::{Duration, Instant}, cmp};
+use std::{
+    cmp,
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
-use futures::{future::select_all, executor::block_on};
+use futures::{executor::block_on, future::select_all};
 use rand::Rng;
 use tokio::sync::{mpsc, oneshot};
-use tonic::{Response, Status, Request};
+use tonic::{Request, Response, Status};
 
-use crate::node::raft_rpcs::{GetRequest, GetResponse, raft_rpc_client::RaftRpcClient, AppendEntriesRequest, PutRequest, PutResponse, Command, VoteRequest, VoteResponse, AppendEntriesResponse, LogEntry};
+use crate::node::raft_rpcs::{
+    raft_rpc_client::RaftRpcClient, AppendEntriesRequest, AppendEntriesResponse, Command,
+    GetRequest, GetResponse, LogEntry, PutRequest, PutResponse, VoteRequest, VoteResponse,
+};
 
-use super::{State, Event, ServerConfig, Node};
-
+use super::{Event, Node, ServerConfig, State};
 
 #[allow(dead_code)]
 impl Node {
@@ -45,7 +51,7 @@ impl Node {
             batch_put_timeout: Some(Instant::now()),
             batch_get_timeout: Some(Instant::now()),
             batched_put_senders: Vec::new(),
-            batched_get_senders: Vec::new()
+            batched_get_senders: Vec::new(),
         }
     }
 
@@ -423,7 +429,7 @@ impl Node {
             if self.state != State::Leader {
                 return;
             }
-            
+
             tokio::time::sleep(Duration::from_millis(50)).await;
             self.send_heartbeat().await;
         }
@@ -552,7 +558,7 @@ impl Node {
 
         return self.respond_to_ae(true);
     }
-    
+
     // fn snapshot(&self) -> (u64, Option<u64>, HashMap<String,i64>) {
     //     (self.current_term, Some(self.commit_index), self.state_machine.clone())
     // }
@@ -568,7 +574,7 @@ impl Node {
     //         let command = Command {
     //             key: k,
     //             value: v,
-    //         }; 
+    //         };
     //         snapshot_log.push(LogEntry {
     //             command: Some(command),
     //             term: self.current_term,
@@ -598,33 +604,33 @@ impl Node {
         loop {
             let timeout = match self.batch_put_timeout {
                 Some(t) => t.elapsed() >= self.config.batch_timeout,
-                None => false
+                None => false,
             };
-            if self.batched_put_requests.len() > self.config.batch_size || timeout{
+            if self.batched_put_requests.len() > self.config.batch_size || timeout {
                 let log = Vec::<Command>::new();
                 for req in self.batched_put_requests {
                     let command = Command {
                         key: req.key,
-                        value: req.value
+                        value: req.value,
                     };
                     log.push(command)
-                };
+                }
 
                 //Change replicate to take in Vec<Command> instead of just Command
                 let result = self.replicate(log).await;
-                
-                for tx in self.batched_put_senders{ 
-                    tx.send(result)
-                    .unwrap_or_else(|_| ());
+
+                for tx in self.batched_put_senders {
+                    tx.send(result).unwrap_or_else(|_| ());
                 }
 
                 self.batched_put_requests = Vec::<PutRequest>::new();
-                self.batched_put_senders = Vec::<oneshot::Sender<Result<Response<PutResponse>, Status>>>::new();
+                self.batched_put_senders =
+                    Vec::<oneshot::Sender<Result<Response<PutResponse>, Status>>>::new();
                 self.batch_put_timeout = Some(Instant::now());
-            } 
+            }
         }
     }
-    
+
     async fn handle_batched_put_request(
         &mut self,
         req: PutRequest,
@@ -648,9 +654,9 @@ impl Node {
         loop {
             let timeout = match self.batch_get_timeout {
                 Some(t) => t.elapsed() >= self.config.batch_timeout,
-                None => false
+                None => false,
             };
-            if self.batched_get_requests.len() > self.config.batch_size || timeout{
+            if self.batched_get_requests.len() > self.config.batch_size || timeout {
                 let mut responses = Vec::new();
                 for peer in &self.peers {
                     // exchange heartbeats with majority of cluster
@@ -674,8 +680,7 @@ impl Node {
                         async move { client.append_entries(request).await },
                     ));
                 }
-                
-            } 
+            }
         }
     }
     async fn handle_batched_get_request(
@@ -683,10 +688,9 @@ impl Node {
         req: GetRequest,
         tx: oneshot::Sender<Result<Response<GetResponse>, Status>>,
     ) {
-
         if self.state != State::Leader {
             tx.send(Ok(Response::new(GetResponse {
-                value: 0, 
+                value: 0,
                 success: false,
                 leader_id: self.voted_for.clone(),
             })))
@@ -697,7 +701,6 @@ impl Node {
         self.batched_get_requests.push(req);
         self.batched_get_senders.push(tx);
     }
-
 }
 
 #[cfg(test)]
