@@ -5,7 +5,7 @@ import pickle
 def ip():
     try:
         IP = socket.gethostbyname(socket.gethostname())
-        IP = '127.0.0.1'
+        print("Game server IP:", IP)
     except Exception:
         IP = '127.0.0.1'
     return IP
