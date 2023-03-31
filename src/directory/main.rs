@@ -24,11 +24,6 @@ impl PeersState {
     }
 }
 
-#[get("/")]
-fn index() -> &'static str {
-    "Hello, world!"
-}
-
 #[get("/get-peers/<ip>")]
 fn get_peers(ip: &str, peers_state: &State<PeersStatePointer>) -> String {
     let mut peers_state = peers_state.lock().unwrap();
@@ -48,6 +43,6 @@ fn kick_peer(ip: &str, peers_state: &State<PeersStatePointer>) -> String {
 #[launch]
 fn rocket() -> _ {
     rocket::build()
-        .mount("/", routes![index, get_peers, kick_peer])
+        .mount("/", routes![get_peers, kick_peer])
         .manage(PeersState::new())
 }
