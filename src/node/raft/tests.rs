@@ -281,9 +281,33 @@ fn test_ae_overwrite() {
     assert_eq!(follower.voted_for, Some(leader_id));
 }
 
+#[test]
+fn test_commit_idx() {
+    // leader node with 2 entries, follower node with 1
+    // leader sends append entries, follower responds back
+    // and leader should update commitindex from 1 to 2
+    let mut l = new_node();
+    l.state = State::Leader;
+
+    // should break down send_AE into sections
+    // creating the request
+    // sending the request and getting a response
+    // handling the response
+
+    // leader gets put request, calls replicate, which sends AE. send_AE doesn't return anything
+    // but it does get messages from other nodes about whether AEs were successful
+    // input: AEresponse
+    // side effect/output: updated commit index, match index
+    
+    let expected_commit = 2;
+    assert_eq!(l.commit_index, expected_commit);
+    
+}
+
 #[tokio::test]
 async fn test_follower() {
     let mut f = new_node();
     f.start_follower().await;
     assert_eq!(f.state, State::Candidate);
 }
+

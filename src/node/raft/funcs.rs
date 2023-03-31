@@ -302,6 +302,28 @@ impl Node {
         }
     }
 
+    /// the leader node updates its commit idx to the highest commit index among the majority of its followers
+    /// O(n), where n is number of peers
+    fn update_commit_idx(&mut self) {
+        let n = self.peers.len();
+        let maj = (n + 1) / 2;
+        let mut occurrences = HashMap::new();
+        for (_, i) in self.match_index.iter() {
+            let o = occurrences.entry(i).or_insert(0);
+            *o += 1;
+        }
+        let mut highest_maj_commit = 0;
+        for (idx, count) in occurrences {
+            if count > maj && idx > &highest_maj_commit {
+                highest_maj_commit = *idx;
+            }
+        }
+        if highest_maj_commit > self.commit_index &&
+            self.log[highest_maj_commit as usize].term == self.current_term {
+            self.commit_index = highest_maj_commit;
+        }
+    }
+
     async fn send_heartbeat(&mut self) {
         if self.state != State::Leader {
             return;
@@ -566,8 +588,20 @@ impl Node {
             // If there exists an N such that N > commitIndex, a majority
             // of matchIndex[i] ≥ N, and log[N].term == currentTerm:
             // set commitIndex = N (§5.3, §5.4).
+
+            // TODO: is this correct?
+            // handle event if there is one, otherwise, heartbeat or continue updating followers
+            match self.mailbox.try_recv() {
+                Ok(event) => self.handle_event(event).await,
+                // no event
+                // if followers not up to date, send one round of AE
+                // otherwise send heartbeat
+                _ => {},
+            }
             tokio::time::sleep(Duration::from_millis(50)).await;
+            // TODO: heartbeat or continue updating followers
             self.send_heartbeat().await;
+            self.update_commit_idx();
         }
     }
 
