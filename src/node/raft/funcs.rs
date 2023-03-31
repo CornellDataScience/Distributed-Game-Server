@@ -275,30 +275,34 @@ impl Node {
             match select_all(responses).await {
                 (Ok((responder, Ok(res))), _, remaining) => {
                     let r = res.into_inner();
-                    if r.term > self.current_term {
-                        self.to_follower(r.term);
-                        return;
-                    }
-                    // update matchIndex and nextIndex if successful
-                    // both should be the last entry that was sent in request
-                    if r.success {
-                        self.match_index
-                            .entry(responder.to_string())
-                            .or_insert(self.log.len() as u64); // assume no entries added since sending request
-                        self.next_index
-                            .entry(responder.to_string())
-                            .or_insert(self.log.len() as u64);
-                    } else {
-                        // failed due to log inconsistency
-                        // set nextindex to mismatch index
-                        self.next_index
-                            .entry(responder.to_string())
-                            .or_insert(r.mismatch_index.unwrap());
-                    }
+                    self.handle_ae_response(responder, r);
                     responses = remaining
                 }
                 (_, _, remaining) => responses = remaining,
             }
+        }
+    }
+
+    fn handle_ae_response(&mut self, responder: String, r: AppendEntriesResponse) {
+        if r.term > self.current_term {
+            self.to_follower(r.term);
+            return;
+        }
+        // update matchIndex and nextIndex if successful
+        // both should be the last entry that was sent in request
+        if r.success {
+            self.match_index
+                .entry(responder.to_string())
+                .or_insert(self.log.len() as u64 - 1); // assume no entries added since sending request
+            self.next_index
+                .entry(responder.to_string())
+                .or_insert(self.log.len() as u64 - 1);
+        } else {
+            // failed due to log inconsistency
+            // set nextindex to mismatch index
+            self.next_index
+                .entry(responder.to_string())
+                .or_insert(r.mismatch_index.unwrap());
         }
     }
 
