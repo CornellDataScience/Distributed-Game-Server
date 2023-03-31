@@ -24,12 +24,10 @@ fn index() -> &'static str {
 
 #[get("/get-peers/<ip>")]
 fn get_peers(ip: &str, peers_state: &State<PeersStatePointer>) -> String {
-    // will this crash if the lock is in use? how to make it wait until lock is available again?
-    // read chapter 16 of Rust book
     let mut peers_state = peers_state.lock().unwrap();
     let peers = &mut peers_state.peers;
     peers.insert(String::from(ip));
-    format!("Added a peer {}. Peers: {:?}", ip, peers)
+    serde_json::to_string(&peers).unwrap()
 }
 
 #[get("/kick-peer/<ip>")]
@@ -37,7 +35,7 @@ fn kick_peer(ip: &str, peers_state: &State<PeersStatePointer>) -> String {
     let mut peers_state = peers_state.lock().unwrap();
     let peers = &mut peers_state.peers;
     peers.remove(&String::from(ip));
-    format!("Removed a peer {}. Peers: {:?}", ip, peers)
+    serde_json::to_string(&peers).unwrap()
 }
 
 #[launch]
