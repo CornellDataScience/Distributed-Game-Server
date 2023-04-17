@@ -668,6 +668,7 @@ impl Node {
         let req_idx = self.log.len() - 1;
         // keep send ae until req committed
         while self.commit_index < req_idx as u64 {
+            // erroring here
             println!("{} is replicating command", self.id);
             self.send_append_entries().await;
         }
