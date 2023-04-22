@@ -625,71 +625,12 @@ impl Node {
         &mut self,
         command: Option<Command>,
     ) -> Result<Response<PutResponse>, Status> {
-        self.log.push(LogEntry {
-            command: command,
-            term: self.current_term,
-        });
-        println!("{} is replicating command", self.id);
-        // let mut requests = Vec::new();
-        // let mut responses = Vec::new();
-        // for peer in &self.peers {
-        //     let (prev_log_index, prev_log_term) = match self.next_index.get(peer) {
-        //         None => (None, 0),
-        //         Some(a) => (Some(*a), self.log[*a as usize].term),
-        //     };
-        //     let mut client = match RaftClient::connect(peer.clone()).await {
-        //         Err(_) => continue,
-        //         Ok(c) => c,
-        //     };
-        //     let request = AppendEntriesRequest {
-        //         term: self.current_term,
-        //         leader_id: self.id.clone(),
-        //         entries: Vec::new(),
-        //         leader_commit: self.commit_index,
-        //         prev_log_index: prev_log_index,
-        //         prev_log_term: prev_log_term,
-        //     };
-        //     responses.push(tokio::spawn(async move {
-        //         client.append_entries(Request::new(request)).await
-        //     }));
-        //     requests.push((peer.clone(), request));
-        // }
-        // while !responses.is_empty() {
-        //     match select_all(responses).await {
-        //         (Ok(Ok(res)), i, remaining) => {
-        //             let r = res.into_inner();
-        //             if !r.success {
-        //                 let mut client = match RaftClient::connect(requests[i].0.clone()).await {
-        //                     Err(_) => continue,
-        //                     Ok(c) => c,
-        //                 };
-        //                 let req = &requests[i].1;
-        //                 // req.prev_log_index = match req.prev_log_index {
-        //                 //     None => None,
-        //                 //     Some(0) => None,
-        //                 //     Some(i) => Some(i - 1),
-        //                 // };
-        //                 responses.push(tokio::spawn(async move {
-        //                     client
-        //                         .append_entries(Request::new(requests[i].1.clone()))
-        //                         .await
-        //                 }));
-        //             }
-        //             if r.term > self.current_term {
-        //                 self.current_term = r.term;
-        //                 self.state = State::Follower;
-        //                 self.voted_for = None;
-        //                 return Ok(Response::new(PutResponse {
-        //                     success: false,
-        //                     leader_id: None,
-        //                 }));
-        //             }
-        //             responses = remaining
-        //         }
-        //         (_, _, remaining) => responses = remaining,
-        //     }
-        // }
-
+        Err(Status::unimplemented("not implemented"))
+    }
+    async fn replicate_vec(
+        &mut self,
+        command: &Vec<Command>,
+    ) -> Result<Response<PutResponse>, Status> {
         Err(Status::unimplemented("not implemented"))
     }
 
@@ -706,20 +647,22 @@ impl Node {
                 None => false,
             };
             if self.batched_put_requests.len() > self.config.batch_size || timeout {
-                let log = Vec::<Command>::new();
-                for req in self.batched_put_requests {
+                let mut log = vec![];
+                for req in &self.batched_put_requests {
                     let command = Command {
-                        key: req.key,
+                        key: (*req.key).to_string(),
                         value: req.value,
                     };
                     log.push(command)
                 }
 
-                // Change replicate to take in Vec<Command> instead of just Command
-                let result = self.replicate(log).await;
-
-                for tx in self.batched_put_senders {
-                    tx.send(result).unwrap_or_else(|_| ());
+                while !self.batched_put_senders.is_empty() {
+                    let result: Result<Response<PutResponse>, Status> =
+                        self.replicate_vec(&log).await;
+                    match self.batched_put_senders.pop() {
+                        Some(tx) => tx.send(result).unwrap_or_else(|_| ()),
+                        None => (),
+                    }
                 }
 
                 self.batched_put_requests = Vec::<PutRequest>::new();
