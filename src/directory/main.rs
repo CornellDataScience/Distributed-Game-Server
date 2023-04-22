@@ -1,8 +1,11 @@
 #[macro_use] extern crate rocket;
 use rocket::State;
+use rocket::serde::json::{Json,Value};
+use rocket::serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
 use std::sync::{Arc, Mutex};
+use digs::client::Client;
 
 // Stole code from https://github.com/SergioBenitez/Rocket/issues/478
 
@@ -24,10 +27,29 @@ impl PeersState {
     }
 }
 
+#[derive(Debug,Serialize,Deserialize,FromForm)]
+#[serde(crate = "rocket::serde")]
+struct GameData {
+    data:Vec<Vec<Vec<u32>>>
+}
+
+
+#[post("/put-info", format="json", data="<data>")]
+fn put_info(peers_state: &State<PeersStatePointer>, data: Json<GameData>) {
+    println!("{:?}", data);
+    let peers_state = peers_state.lock().unwrap();
+    let peers = &peers_state.peers;
+    let p = peers.clone().into_iter().collect();
+    let mut c = Client::new(p);
+    // let key = String::from("key");
+    // c.put(key.clone(), 1);
+
+}
+
 #[get("/get-peers")]
 fn get_peers(peers_state: &State<PeersStatePointer>) -> String {
-    let mut peers_state = peers_state.lock().unwrap();
-    let peers = &mut peers_state.peers;
+    let peers_state = peers_state.lock().unwrap();
+    let peers = &peers_state.peers;
     serde_json::to_string(&peers).unwrap()
 }
 
@@ -50,6 +72,6 @@ fn kick_peer(ip: &str, peers_state: &State<PeersStatePointer>) -> String {
 #[launch]
 fn rocket() -> _ {
     rocket::build()
-        .mount("/", routes![get_peers, kick_peer, get_peers_add_ip])
+        .mount("/", routes![get_peers, kick_peer, get_peers_add_ip, put_info])
         .manage(PeersState::new())
 }
