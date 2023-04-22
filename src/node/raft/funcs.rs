@@ -93,6 +93,7 @@ impl Node {
         }
     }
 
+    /// returns a vector of log entries which have index and term greater than from_idx and from_term
     fn get_entries(&self, from_term: &u64, from_idx: &u64) -> Vec<LogEntry> {
         self.log
             .iter()
@@ -152,7 +153,8 @@ impl Node {
         let mut responses = Vec::new();
         for peer in &self.peers {
             // exchange heartbeats with majority of cluster
-            let prev_log_index = self.next_index.get(peer).unwrap();
+            // TODO: replace this with gen ae request for consistency
+            let prev_log_index = self.next_index.get(peer).unwrap_or_else(|| &0);
             let prev_log_term = self.log[*prev_log_index as usize].term;
 
             let mut client = match RaftRpcClient::connect(peer.clone()).await {
@@ -179,6 +181,7 @@ impl Node {
                     if r.success {
                         num_successes += 1;
                         if num_successes >= self.peers.len() / 2 + 1 {
+                            println!("majority replicated");
                             return tx
                                 .send(Ok(Response::new(GetResponse {
                                     value: *self.state_machine.get(&req.key).unwrap_or(&0),
@@ -234,7 +237,7 @@ impl Node {
             key: req.key,
             value: req.value,
         };
-        tx.send(self.replicate(Some(command)).await)
+        tx.send(self.replicate(vec![Some(command)]).await)
             .unwrap_or_else(|_| ());
     }
 
@@ -266,6 +269,7 @@ impl Node {
         }
         let mut responses = Vec::new();
         for peer in &self.peers {
+            println!("sending ae req to peer {}", peer);
             let mut client = match RaftRpcClient::connect(peer.clone()).await {
                 Err(_) => continue,
                 Ok(c) => c,
@@ -282,30 +286,58 @@ impl Node {
             match select_all(responses).await {
                 (Ok((responder, Ok(res))), _, remaining) => {
                     let r = res.into_inner();
-                    if r.term > self.current_term {
-                        self.to_follower(r.term);
-                        return;
-                    }
-                    // update matchIndex and nextIndex if successful
-                    // both should be the last entry that was sent in request
-                    if r.success {
-                        self.match_index
-                            .entry(responder.to_string())
-                            .or_insert(self.log.len() as u64); // assume no entries added since sending request
-                        self.next_index
-                            .entry(responder.to_string())
-                            .or_insert(self.log.len() as u64);
-                    } else {
-                        // failed due to log inconsistency
-                        // set nextindex to mismatch index
-                        self.next_index
-                            .entry(responder.to_string())
-                            .or_insert(r.mismatch_index.unwrap());
-                    }
+                    println!("got {} ae response from {}", r.success, responder);
+                    self.handle_ae_response(responder, r);
                     responses = remaining
                 }
                 (_, _, remaining) => responses = remaining,
             }
+        }
+    }
+
+    fn handle_ae_response(&mut self, responder: String, r: AppendEntriesResponse) {
+        if r.term > self.current_term {
+            self.to_follower(r.term);
+            return;
+        }
+        // update matchIndex and nextIndex if successful
+        // both should be the last entry that was sent in request
+        if r.success {
+            self.match_index
+                .entry(responder.to_string())
+                .or_insert(self.log.len() as u64 - 1); // assume no entries added since sending request
+            self.next_index
+                .entry(responder.to_string())
+                .or_insert(self.log.len() as u64 - 1);
+        } else {
+            // failed due to log inconsistency
+            // set nextindex to mismatch index
+            self.next_index
+                .entry(responder.to_string())
+                .or_insert(r.mismatch_index.unwrap());
+        }
+    }
+
+    /// the leader node updates its commit idx to the highest commit index among the majority of its followers
+    /// O(n), where n is number of peers
+    fn update_commit_idx(&mut self) {
+        let n = self.peers.len();
+        let maj = (n + 1) / 2;
+        let mut occurrences = HashMap::new();
+        for (_, i) in self.match_index.iter() {
+            let o = occurrences.entry(i).or_insert(0);
+            *o += 1;
+        }
+        let mut highest_maj_commit = 0;
+        for (idx, count) in occurrences {
+            if count > maj && idx > &highest_maj_commit {
+                highest_maj_commit = *idx;
+            }
+        }
+        if highest_maj_commit > self.commit_index
+            && self.log[highest_maj_commit as usize].term == self.current_term
+        {
+            self.commit_index = highest_maj_commit;
         }
     }
 
@@ -365,6 +397,8 @@ impl Node {
             return self.respond_to_ae(true, None);
         }
 
+        println!("handling nonempty ae");
+
         // next_i is the index of the first new entry to add to the log
         // consistent (at least up until prev_log_term) if log is at least as many entries
         // and the term matches (can prove inductively?)
@@ -401,8 +435,14 @@ impl Node {
             self.log.pop();
         }
 
-        // update commit index
+        // update commit index and apply log entries to state machine
         if req.leader_commit > self.commit_index {
+            for i in self.commit_index + 1..req.leader_commit + 1 {
+                let c = &self.log[i as usize].command;
+                self.state_machine
+                    .entry(c.as_ref().unwrap().key.clone())
+                    .or_insert(c.as_ref().unwrap().value);
+            }
             self.commit_index = cmp::min(req.leader_commit, (self.log.len() - 1) as u64);
         }
 
@@ -576,9 +616,27 @@ impl Node {
             if self.state != State::Leader {
                 return;
             }
+            
+            // TODO: If last log index ≥ nextIndex for a follower: send
+            // AppendEntries RPC with log entries starting at nextIndex
+            // If there exists an N such that N > commitIndex, a majority
+            // of matchIndex[i] ≥ N, and log[N].term == currentTerm:
+            // set commitIndex = N (§5.3, §5.4).
 
+            // TODO: is this correct?
+            // handle event if there is one, otherwise, heartbeat or continue updating followers
+            match self.mailbox.try_recv() {
+                Ok(event) => self.handle_event(event).await,
+                // no event
+                // if followers not up to date, send one round of AE
+                // otherwise send heartbeat
+                _ => {}
+            }
             tokio::time::sleep(Duration::from_millis(50)).await;
+            // TODO: heartbeat or continue updating followers
             self.send_heartbeat().await;
+            // so prints are slower
+            // tokio::time::sleep(Duration::from_millis(5000)).await;
         }
     }
 
@@ -623,9 +681,40 @@ impl Node {
     ///
     async fn replicate(
         &mut self,
-        command: Option<Command>,
-    ) -> Result<Response<PutResponse>, Status> {
-        Err(Status::unimplemented("not implemented"))
+        commands: Vec<Option<Command>>,
+        // If command received from client: append entry to local log,
+        // respond after entry applied to state machine (§5.3)
+        // which is once the command has been committed
+
+        // push entries onto log
+        for command in &commands {
+            self.log.push(LogEntry {
+                // does it make sense to use a clone here
+                command: command.clone(),
+                term: self.current_term,
+            });
+        }
+
+        // TODO: will this loop cause things to stall?
+        let req_idx = self.log.len() - 1;
+        // keep sending ae until req committed
+        while self.commit_index < req_idx as u64 {
+            // erroring here
+            println!("{} is replicating command", self.id);
+            self.send_append_entries().await;
+            self.update_commit_idx();
+        }
+        // apply new log entries to state machine
+        for command in &commands {
+            self.state_machine
+                .entry(command.as_ref().unwrap().key.clone())
+                .or_insert(command.as_ref().unwrap().value);
+        }
+
+        Ok(Response::new(PutResponse {
+            success: true,
+            leader_id: Some(self.id.to_string()),
+        }))
     }
     async fn replicate_vec(
         &mut self,
