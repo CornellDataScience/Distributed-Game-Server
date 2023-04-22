@@ -1,6 +1,7 @@
 import socket
 import time
 import pickle
+import requests
 
 def ip():
     try:
@@ -53,6 +54,10 @@ class Server:
 
     def stop(self):
         self.running = False
+
+    def get_leader(self):
+        leader_ip = requests.get("http://127.0.0.1:8080/get-peers/dummy").json()
+        print(leader_ip)
 
 
 srvr = Server()
