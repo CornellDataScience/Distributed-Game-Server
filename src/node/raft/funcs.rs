@@ -64,7 +64,15 @@ impl Node {
             next_timeout: None,
             config: ServerConfig {
                 timeout: Duration::new(2, 0),
+                batch_size: 5,
+                batch_timeout: Duration::new(5, 0),
             },
+            batched_put_requests: Vec::new(),
+            batched_get_requests: Vec::new(),
+            batch_put_timeout: Some(Instant::now()),
+            batch_get_timeout: Some(Instant::now()),
+            batched_put_senders: Vec::new(),
+            batched_get_senders: Vec::new(),
             next_index: HashMap::new(),
             match_index: HashMap::new(),
         }
@@ -123,7 +131,7 @@ impl Node {
     ///
     /// # Arguments
     /// `self` - Node recieving the client request
-    /// `req` - Request sent by client
+    /// `req` - Get request sent by client
     /// `tx` - GRPC transaction
     async fn handle_get_request(
         &mut self,
@@ -207,7 +215,7 @@ impl Node {
     ///
     /// # Arguments
     /// `self` - Node sending request
-    /// `req` - Request being sent
+    /// `req` - Put request being sent
     /// `tx` - GRPC Transaction
     async fn handle_put_request(
         &mut self,
@@ -233,7 +241,7 @@ impl Node {
     // --------------------------- APPEND ENTRIES -----------------------------
 
     fn gen_ae_request(&self, peer: &String, heartbeat: bool) -> Request<AppendEntriesRequest> {
-        let prev_log_index = self.next_index.get(peer).unwrap_or_else(|| {&0});
+        let prev_log_index = self.next_index.get(peer).unwrap_or_else(|| &0);
         let prev_log_term = self.log[*prev_log_index as usize].term;
 
         let entries = if heartbeat {
@@ -389,7 +397,9 @@ impl Node {
         }
 
         // remove entries past next_i+n, if they exist
-        for _ in 0..(next_i+n - self.log.len()) { self.log.pop(); }
+        for _ in 0..(next_i + n - self.log.len()) {
+            self.log.pop();
+        }
 
         // update commit index
         if req.leader_commit > self.commit_index {
@@ -407,7 +417,10 @@ impl Node {
         Ok(Response::new(AppendEntriesResponse {
             term: self.current_term,
             success: success,
-            mismatch_index: match mismatch_index { None => None, Some(i) => Some(i as u64)},
+            mismatch_index: match mismatch_index {
+                None => None,
+                Some(i) => Some(i as u64),
+            },
         }))
     }
 
@@ -420,7 +433,10 @@ impl Node {
                 Err(_) => continue,
                 Ok(c) => c,
             };
-            let (last_log_idx, last_term) = ((self.log.len()-1) as u64, self.log[self.log.len() - 1].term);
+            let (last_log_idx, last_term) = (
+                (self.log.len() - 1) as u64,
+                self.log[self.log.len() - 1].term,
+            );
             let mut request = Request::new(VoteRequest {
                 term: self.current_term,
                 candidate_id: self.id.clone(),
@@ -560,6 +576,7 @@ impl Node {
             if self.state != State::Leader {
                 return;
             }
+
             tokio::time::sleep(Duration::from_millis(50)).await;
             self.send_heartbeat().await;
         }
@@ -608,72 +625,115 @@ impl Node {
         &mut self,
         command: Option<Command>,
     ) -> Result<Response<PutResponse>, Status> {
-        self.log.push(LogEntry {
-            command: command,
-            term: self.current_term,
-        });
-        println!("{} is replicating command", self.id);
-        // let mut requests = Vec::new();
-        // let mut responses = Vec::new();
-        // for peer in &self.peers {
-        //     let (prev_log_index, prev_log_term) = match self.next_index.get(peer) {
-        //         None => (None, 0),
-        //         Some(a) => (Some(*a), self.log[*a as usize].term),
-        //     };
-        //     let mut client = match RaftClient::connect(peer.clone()).await {
-        //         Err(_) => continue,
-        //         Ok(c) => c,
-        //     };
-        //     let request = AppendEntriesRequest {
-        //         term: self.current_term,
-        //         leader_id: self.id.clone(),
-        //         entries: Vec::new(),
-        //         leader_commit: self.commit_index,
-        //         prev_log_index: prev_log_index,
-        //         prev_log_term: prev_log_term,
-        //     };
-        //     responses.push(tokio::spawn(async move {
-        //         client.append_entries(Request::new(request)).await
-        //     }));
-        //     requests.push((peer.clone(), request));
-        // }
-        // while !responses.is_empty() {
-        //     match select_all(responses).await {
-        //         (Ok(Ok(res)), i, remaining) => {
-        //             let r = res.into_inner();
-        //             if !r.success {
-        //                 let mut client = match RaftClient::connect(requests[i].0.clone()).await {
-        //                     Err(_) => continue,
-        //                     Ok(c) => c,
-        //                 };
-        //                 let req = &requests[i].1;
-        //                 // req.prev_log_index = match req.prev_log_index {
-        //                 //     None => None,
-        //                 //     Some(0) => None,
-        //                 //     Some(i) => Some(i - 1),
-        //                 // };
-        //                 responses.push(tokio::spawn(async move {
-        //                     client
-        //                         .append_entries(Request::new(requests[i].1.clone()))
-        //                         .await
-        //                 }));
-        //             }
-        //             if r.term > self.current_term {
-        //                 self.current_term = r.term;
-        //                 self.state = State::Follower;
-        //                 self.voted_for = None;
-        //                 return Ok(Response::new(PutResponse {
-        //                     success: false,
-        //                     leader_id: None,
-        //                 }));
-        //             }
-        //             responses = remaining
-        //         }
-        //         (_, _, remaining) => responses = remaining,
-        //     }
-        // }
-
         Err(Status::unimplemented("not implemented"))
+    }
+    async fn replicate_vec(
+        &mut self,
+        command: &Vec<Command>,
+    ) -> Result<Response<PutResponse>, Status> {
+        Err(Status::unimplemented("not implemented"))
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    // Batching below
+    ////////////////////////////////////////////////////////////////////////////
+
+    /// Send out batch when time is up or batch is filled
+    async fn start_batched_put(&mut self) {
+        self.batch_put_timeout = Some(Instant::now());
+        loop {
+            let timeout = match self.batch_put_timeout {
+                Some(t) => t.elapsed() >= self.config.batch_timeout,
+                None => false,
+            };
+            if self.batched_put_requests.len() > self.config.batch_size || timeout {
+                let mut log = vec![];
+                for req in &self.batched_put_requests {
+                    let command = Command {
+                        key: (*req.key).to_string(),
+                        value: req.value,
+                    };
+                    log.push(command)
+                }
+
+                while !self.batched_put_senders.is_empty() {
+                    let result: Result<Response<PutResponse>, Status> =
+                        self.replicate_vec(&log).await;
+                    match self.batched_put_senders.pop() {
+                        Some(tx) => tx.send(result).unwrap_or_else(|_| ()),
+                        None => (),
+                    }
+                }
+
+                self.batched_put_requests = Vec::<PutRequest>::new();
+                self.batched_put_senders =
+                    Vec::<oneshot::Sender<Result<Response<PutResponse>, Status>>>::new();
+                self.batch_put_timeout = Some(Instant::now());
+            }
+        }
+    }
+
+    /// Add put requests to batch
+    async fn handle_batched_put_request(
+        &mut self,
+        req: PutRequest,
+        tx: oneshot::Sender<Result<Response<PutResponse>, Status>>,
+    ) {
+        if self.state != State::Leader {
+            tx.send(Ok(Response::new(PutResponse {
+                success: false,
+                leader_id: self.voted_for.clone(),
+            })))
+            .unwrap_or_else(|_| ());
+            return;
+        }
+
+        self.batched_put_requests.push(req);
+        self.batched_put_senders.push(tx);
+    }
+
+    /// Send out get request when time limit is exceeded or batch size is hit
+    async fn start_batched_get(&mut self) {
+        self.batch_get_timeout = Some(Instant::now());
+        loop {
+            let timeout = match self.batch_get_timeout {
+                Some(t) => t.elapsed() >= self.config.batch_timeout,
+                None => false,
+            };
+            if self.batched_get_requests.len() > self.config.batch_size || timeout {
+                while self.batched_get_senders.len() > 0 {
+                    let req = match self.batched_get_requests.pop() {
+                        Some(a) => a,
+                        None => break,
+                    };
+                    let tx = match self.batched_get_senders.pop() {
+                        Some(a) => a,
+                        None => break,
+                    };
+                    self.handle_get_request(req, tx);
+                }
+            }
+        }
+    }
+
+    /// Add get requests to batch
+    async fn handle_batched_get_request(
+        &mut self,
+        req: GetRequest,
+        tx: oneshot::Sender<Result<Response<GetResponse>, Status>>,
+    ) {
+        if self.state != State::Leader {
+            tx.send(Ok(Response::new(GetResponse {
+                value: 0,
+                success: false,
+                leader_id: self.voted_for.clone(),
+            })))
+            .unwrap_or_else(|_| ());
+            return;
+        }
+
+        self.batched_get_requests.push(req);
+        self.batched_get_senders.push(tx);
     }
 }
 
