@@ -178,7 +178,7 @@ fn test_ae_heartbeat() {
     let expected_response = AppendEntriesResponse {
         term: 1,
         success: true,
-        mismatch_index: None
+        mismatch_index: None,
     };
     test_append_entries(&mut follower, req, expected_response);
 }
@@ -198,7 +198,7 @@ fn test_ae_older_term() {
     let expected_response = AppendEntriesResponse {
         term: 2,
         success: false,
-        mismatch_index: None
+        mismatch_index: None,
     };
     test_append_entries(&mut follower, req, expected_response);
 }
@@ -238,10 +238,15 @@ fn test_ae_initial() {
     let expected_response = AppendEntriesResponse {
         term: 1,
         success: true,
-        mismatch_index: None
+        mismatch_index: None,
     };
     test_append_entries(&mut follower, req, expected_response);
-    let expected_log = Vec::from([follower.log[0].clone(), noop_entry(1), noop_entry(1), noop_entry(1)]);
+    let expected_log = Vec::from([
+        follower.log[0].clone(),
+        noop_entry(1),
+        noop_entry(1),
+        noop_entry(1),
+    ]);
     assert_eq!(follower.log, expected_log);
 }
 
@@ -262,14 +267,14 @@ fn test_ae_overwrite() {
     let expected_response = AppendEntriesResponse {
         term: 4,
         success: true,
-        mismatch_index: None
+        mismatch_index: None,
     };
     let leader_id = req.clone().leader_id;
     test_append_entries(&mut follower, req, expected_response);
     // for i in follower.log {
     //     println!("{}", i);
     // }
-    
+
     let expected_log = Vec::from([
         noop_entry(1),
         noop_entry(2),
@@ -281,6 +286,63 @@ fn test_ae_overwrite() {
     assert_eq!(follower.voted_for, Some(leader_id));
 }
 
+#[test]
+fn test_update_commit_idx1() {
+    // Leader should update its commit index to 1 because highest
+    // majority index where logs are matching is 1
+    // match_index = { "1": 1, "2": 1, "3": 1 }
+    let mut l = new_node();
+    l.peers = vec![String::from("1"), String::from("2"), String::from("3")];
+    l.commit_index = 0;
+    l.log.push(noop_entry(4));
+    l.current_term = 4;
+    l.match_index = HashMap::from([
+        ("1".to_string(), 1),
+        ("2".to_string(), 1),
+        ("3".to_string(), 1),
+    ]);
+    l.update_commit_idx();
+    assert_eq!(l.commit_index, 1);
+}
+
+#[test]
+fn test_update_commit_idx2() {
+    // should still work even without maj index being consistent
+    // match_index = { "1": 6, "2": 2, "3": 3}
+    let mut m = new_node();
+    m.peers = vec![String::from("1"), String::from("2"), String::from("3")];
+    m.commit_index = 0;
+    m.log.push(noop_entry(4));
+    m.log.push(noop_entry(4));
+    m.current_term = 4;
+    m.match_index = HashMap::from([
+        ("1".to_string(), 6),
+        ("2".to_string(), 2),
+        ("3".to_string(), 3),
+    ]);
+    m.update_commit_idx();
+    assert_eq!(m.commit_index, 2);
+}
+
+#[test]
+fn test_update_commit_idx3() {
+    // 1/2 of nodes is not the majority
+    // match_index = { "1": 1, "2": 2, "3": 2, "4": 1}
+    let mut l = new_node();
+    l.peers = vec![String::from("1"), String::from("2"), String::from("3"), String::from("4")];
+    l.commit_index = 0;
+    l.log.push(noop_entry(4));
+    l.log.push(noop_entry(4));
+    l.current_term = 4;
+    l.match_index = HashMap::from([
+        ("1".to_string(), 1),
+        ("2".to_string(), 2),
+        ("3".to_string(), 2),
+        ("3".to_string(), 1)
+    ]);
+    l.update_commit_idx();
+    assert_eq!(l.commit_index, 1);
+}
 
 // also need tests for failed consistency and such
 #[test]
@@ -290,7 +352,10 @@ fn test_commit_idx() {
     // and leader should update commitindex from 1 to 2
     let mut l = new_node();
     l.state = State::Leader;
-    l.log.push(LogEntry { command: None, term: 1 });
+    l.log.push(LogEntry {
+        command: None,
+        term: 1,
+    });
 
     // should break down send_AE into sections
     // creating the request
@@ -299,7 +364,9 @@ fn test_commit_idx() {
     let responder1 = "follower1";
     let responder2 = "follower2";
     let r = AppendEntriesResponse {
-        term: 1, success: true, mismatch_index: None
+        term: 1,
+        success: true,
+        mismatch_index: None,
     };
     l.handle_ae_response(responder1.to_string(), r.clone());
     l.handle_ae_response(responder2.to_string(), r.clone());
@@ -309,10 +376,9 @@ fn test_commit_idx() {
     // but it does get messages from other nodes about whether AEs were successful
     // input: AEresponse
     // side effect/output: updated commit index, match index
-    
+
     let expected_commit = 1;
     assert_eq!(l.commit_index, expected_commit);
-    
 }
 
 #[tokio::test]
@@ -321,4 +387,3 @@ async fn test_follower() {
     f.start_follower().await;
     assert_eq!(f.state, State::Candidate);
 }
-

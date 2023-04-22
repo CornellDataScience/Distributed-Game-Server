@@ -41,6 +41,7 @@ impl Client {
             }
             Some(l) => String::from("http://") + l,
         };
+        self.current_leader = Some(dst_ip.to_string());
         self.connections.get(dst_ip).unwrap().clone()
     }
 
@@ -65,9 +66,10 @@ impl Client {
     }
 
     /// Pushes a key value pair to the leader
-    pub fn put(&mut self, key: String, value: i64) -> bool {
+    pub fn put(&mut self, key: String, value: i64) -> Result<(), String> {
         let mut dst = self.find_leader();
-        println!("putting");
+        println!("putting {:?}", self.current_leader);
+
         let req = PutRequest {
             key: key.clone(),
             value: value,
@@ -77,10 +79,14 @@ impl Client {
             Ok(res) => {
                 let r = res.into_inner();
                 self.current_leader = r.leader_id;
-                // TODO: may want to try finding the leader again, but for now, if put unsuccessful, return false
-                return r.success;
+                // try finding the leader again if put unsuccessful
+                if !r.success {
+                    return self.put(key, value);
+                }
+                return Ok(())
             }
-            _ => return false,
+            // Expected Ok, but failed for some reason
+            _ => return Err("Put request was not Ok for some reason".to_string()),
         }
         // self.put(key, value)
     }

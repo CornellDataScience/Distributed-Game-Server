@@ -117,6 +117,27 @@ impl Node {
         self.voted = false;
     }
 
+    fn print_debug(&self) {
+        // print log, term, state machine
+        println!("Log entries: {:?}", self.log);
+
+        println!("curr term {}", self.current_term);
+        println!("commit index {}", self.commit_index);
+        println!("State Machine Applied Entries");
+        println!("{:?}", self.state_machine);
+        if self.state == State::Leader {
+            println!("ip, next index, match index");
+            for id in &self.peers {
+                println!(
+                    "{}, {}, {}",
+                    id.clone(),
+                    self.next_index.get(&id.clone()).unwrap(),
+                    self.match_index.get(&id.clone()).unwrap()
+                );
+            }
+        }
+    }
+
     // ------------------------------- CLIENT REQUESTS ------------------------
 
     /// Recieves client request, verifies node's leadership by exchanging heartbeat
@@ -174,6 +195,7 @@ impl Node {
                         num_successes += 1;
                         if num_successes >= self.peers.len() / 2 + 1 {
                             println!("majority replicated");
+                            println!("{:?}", self.state_machine);
                             return tx
                                 .send(Ok(Response::new(GetResponse {
                                     value: *self.state_machine.get(&req.key).unwrap_or(&0),
@@ -197,13 +219,12 @@ impl Node {
                 (_, _, remaining) => responses = remaining,
             }
         }
-        return tx
-            .send(Ok(Response::new(GetResponse {
-                value: 0,
-                success: false,
-                leader_id: Some(self.id.clone()),
-            })))
-            .unwrap_or_else(|_| ());
+        tx.send(Ok(Response::new(GetResponse {
+            value: 0,
+            success: false,
+            leader_id: Some(self.id.clone()),
+        })))
+        .unwrap_or_else(|_| ())
     }
 
     /// Sends command to rest of cluster
@@ -218,6 +239,7 @@ impl Node {
         tx: oneshot::Sender<Result<Response<PutResponse>, Status>>,
     ) {
         if self.state != State::Leader {
+            println!("rerouting put req");
             tx.send(Ok(Response::new(PutResponse {
                 success: false,
                 leader_id: self.voted_for.clone(),
@@ -310,26 +332,28 @@ impl Node {
         }
     }
 
-    /// the leader node updates its commit idx to the highest commit index among the majority of its followers
+    /// the leader node updates its commit idx to the highest index among the majority of its followers
     /// O(n), where n is number of peers
     fn update_commit_idx(&mut self) {
         let n = self.peers.len();
         let maj = (n + 1) / 2;
+        // occurrences is frequency of highest node indexes
         let mut occurrences = HashMap::new();
         for (_, i) in self.match_index.iter() {
             let o = occurrences.entry(i).or_insert(0);
             *o += 1;
         }
-        let mut highest_maj_commit = 0;
+        // TODO: THIS IS NOT ENTIRELY CORRECT. Need to include counts of higher indexes when comparing to maj
+        let mut highest_maj_idx = 0;
         for (idx, count) in occurrences {
-            if count > maj && idx > &highest_maj_commit {
-                highest_maj_commit = *idx;
+            if count > maj && idx > &highest_maj_idx {
+                highest_maj_idx = *idx;
             }
         }
-        if highest_maj_commit > self.commit_index
-            && self.log[highest_maj_commit as usize].term == self.current_term
+        if highest_maj_idx > self.commit_index
+            && self.log[highest_maj_idx as usize].term == self.current_term
         {
-            self.commit_index = highest_maj_commit;
+            self.commit_index = highest_maj_idx;
         }
     }
 
@@ -429,6 +453,7 @@ impl Node {
 
         // update commit index and apply log entries to state machine
         if req.leader_commit > self.commit_index {
+            println!("ae update commit and apply log entries");
             for i in self.commit_index + 1..req.leader_commit + 1 {
                 let c = &self.log[i as usize].command;
                 self.state_machine
@@ -549,6 +574,12 @@ impl Node {
     /// `self` - Node receiving event
     /// `event` - Event being
     async fn handle_event(&mut self, event: Event) {
+        match &event {
+            Event::ClientGetRequest { .. } | Event::ClientPutRequest { .. } => {
+                println!("{:?}", event)
+            }
+            _ => {}
+        }
         match event {
             Event::RequestVote { req, tx } => tx
                 .send(self.handle_request_vote(tonic::Request::new(req)))
@@ -677,7 +708,7 @@ impl Node {
         // If command received from client: append entry to local log,
         // respond after entry applied to state machine (§5.3)
         // which is once the command has been committed
-
+        println!("calling replicate");
         // push entries onto log
         for command in &commands {
             self.log.push(LogEntry {
@@ -695,6 +726,7 @@ impl Node {
             println!("{} is replicating command", self.id);
             self.send_append_entries().await;
             self.update_commit_idx();
+            self.print_debug();
         }
         // apply new log entries to state machine
         for command in &commands {
