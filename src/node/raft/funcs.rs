@@ -333,7 +333,7 @@ impl Node {
     }
 
     /// the leader node updates its commit idx to the highest index among the majority of its followers
-    /// O(n), where n is number of peers
+    /// Probably not O(n), where n is number of peers
 
     fn update_commit_idx(&mut self) {
         let n = self.peers.len();
