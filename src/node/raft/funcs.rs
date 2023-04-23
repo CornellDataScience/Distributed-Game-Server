@@ -1,6 +1,6 @@
 use std::{
     cmp,
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     time::{Duration, Instant},
 };
 
@@ -334,20 +334,26 @@ impl Node {
 
     /// the leader node updates its commit idx to the highest index among the majority of its followers
     /// O(n), where n is number of peers
+
     fn update_commit_idx(&mut self) {
         let n = self.peers.len();
         let maj = (n + 1) / 2;
-        // occurrences is frequency of highest node indexes
         let mut occurrences = HashMap::new();
         for (_, i) in self.match_index.iter() {
             let o = occurrences.entry(i).or_insert(0);
             *o += 1;
         }
-        // TODO: THIS IS NOT ENTIRELY CORRECT. Need to include counts of higher indexes when comparing to maj
-        let mut highest_maj_idx = 0;
+        let mut cumulative_occurances = BTreeMap::new();
         for (idx, count) in occurrences {
-            if count > maj && idx > &highest_maj_idx {
-                highest_maj_idx = *idx;
+            cumulative_occurances.insert(idx, count);
+        }
+        let mut highest_maj_idx = 0;
+        let mut cum_sum = 0;
+        for (idx, count) in cumulative_occurances.iter().rev() {
+            cum_sum += count;
+            if cum_sum > maj && *idx > &highest_maj_idx {
+                highest_maj_idx = **idx;
+                break;
             }
         }
         if highest_maj_idx > self.commit_index
