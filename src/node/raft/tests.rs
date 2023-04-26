@@ -347,9 +347,10 @@ fn test_update_commit_idx3() {
 // also need tests for failed consistency and such
 #[test]
 fn test_commit_idx() {
-    // leader node with 2 entries, follower node with 1
+    // leader node with 0th and 1st entries, follower node with 0th
     // leader sends append entries, follower responds back
-    // and leader should update commitindex from 1 to 2
+    // and leader should update commitindex from 0 to 1
+    // leader should also have updated next index, match index
     let mut l = new_node();
     l.state = State::Leader;
     l.log.push(LogEntry {
@@ -357,10 +358,6 @@ fn test_commit_idx() {
         term: 1,
     });
 
-    // should break down send_AE into sections
-    // creating the request
-    // sending the request and getting a response
-    // handling the response
     let responder1 = "follower1";
     let responder2 = "follower2";
     let r = AppendEntriesResponse {
@@ -370,15 +367,32 @@ fn test_commit_idx() {
     };
     l.handle_ae_response(responder1.to_string(), r.clone());
     l.handle_ae_response(responder2.to_string(), r.clone());
+    assert_eq!(l.match_index[responder1], 1);
+    assert_eq!(l.match_index[responder2], 1);
+    assert_eq!(l.next_index[responder1], 2);
+    assert_eq!(l.next_index[responder2], 2);
     l.update_commit_idx();
-
-    // leader gets put request, calls replicate, which sends AE. send_AE doesn't return anything
-    // but it does get messages from other nodes about whether AEs were successful
-    // input: AEresponse
-    // side effect/output: updated commit index, match index
 
     let expected_commit = 1;
     assert_eq!(l.commit_index, expected_commit);
+
+    l.log.push(LogEntry {
+        command: None,
+        term: 1,
+    });
+    let r = AppendEntriesResponse {
+        term: 1,
+        success: true,
+        mismatch_index: None,
+    };
+    l.handle_ae_response(responder1.to_string(), r.clone());
+    l.handle_ae_response(responder2.to_string(), r.clone());
+    assert_eq!(l.match_index[responder1], 2);
+    assert_eq!(l.match_index[responder2], 2);
+    assert_eq!(l.next_index[responder1], 3);
+    assert_eq!(l.next_index[responder2], 3);
+    l.update_commit_idx();
+    assert_eq!(l.commit_index, 2);
 }
 
 #[tokio::test]

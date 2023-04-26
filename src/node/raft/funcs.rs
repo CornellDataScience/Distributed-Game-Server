@@ -166,22 +166,12 @@ impl Node {
         let mut responses = Vec::new();
         for peer in &self.peers {
             // exchange heartbeats with majority of cluster
-            // TODO: replace this with gen ae request for consistency
-            let prev_log_index = self.next_index.get(peer).unwrap_or_else(|| &0);
-            let prev_log_term = self.log[*prev_log_index as usize].term;
-
             let mut client = match RaftRpcClient::connect(peer.clone()).await {
                 Err(_) => continue,
                 Ok(c) => c,
             };
-            let request = Request::new(AppendEntriesRequest {
-                term: self.current_term,
-                leader_id: self.id.clone(),
-                entries: Vec::new(),
-                leader_commit: self.commit_index,
-                prev_log_index: *prev_log_index,
-                prev_log_term: prev_log_term,
-            });
+            let request = self.gen_ae_request(peer, true);
+
             responses.push(tokio::spawn(
                 async move { client.append_entries(request).await },
             ));
@@ -258,7 +248,7 @@ impl Node {
     // --------------------------- APPEND ENTRIES -----------------------------
 
     fn gen_ae_request(&self, peer: &String, heartbeat: bool) -> Request<AppendEntriesRequest> {
-        let prev_log_index = self.next_index.get(peer).unwrap_or_else(|| &0);
+        let prev_log_index = self.match_index.get(peer).unwrap_or_else(|| &0);
         let prev_log_term = self.log[*prev_log_index as usize].term;
 
         let entries = if heartbeat {
@@ -314,42 +304,45 @@ impl Node {
             self.to_follower(r.term);
             return;
         }
+        // TODO: I think we don't need nextIndex if we just send the entries 
+        // between matching index and end of leader log. Might be an issue if nodes are
+        // missing a significant number of entries though
+        // in this case may want to send no more than some number of entries.
+
         // update matchIndex and nextIndex if successful
         // both should be the last entry that was sent in request
         if r.success {
             self.match_index
-                .entry(responder.to_string())
-                .or_insert(self.log.len() as u64 - 1); // assume no entries added since sending request
+                .insert(responder.to_string(), self.log.len() as u64 - 1); // assume no entries added since sending request
             self.next_index
-                .entry(responder.to_string())
-                .or_insert(self.log.len() as u64 - 1);
+                .insert(responder.to_string(), self.log.len() as u64);
         } else {
             // failed due to log inconsistency
             // set nextindex to mismatch index
+            self.match_index
+                .entry(responder.to_string()).or_insert(0);
             self.next_index
-                .entry(responder.to_string())
-                .or_insert(r.mismatch_index.unwrap());
+                .insert(responder.to_string(), r.mismatch_index.unwrap());
         }
     }
 
     /// the leader node updates its commit idx to the highest index among the majority of its followers
-    /// Probably not O(n), where n is number of peers
-
+    /// O(nlogn), where n is number of peers
     fn update_commit_idx(&mut self) {
         let n = self.peers.len();
         let maj = (n + 1) / 2;
-        let mut occurrences = HashMap::new();
+
+        // create a map ordered by the keys (match indexes)
+        let mut cumulative_occurrences = BTreeMap::new();
         for (_, i) in self.match_index.iter() {
-            let o = occurrences.entry(i).or_insert(0);
+            let o = cumulative_occurrences.entry(i).or_insert(0);
             *o += 1;
         }
-        let mut cumulative_occurances = BTreeMap::new();
-        for (idx, count) in occurrences {
-            cumulative_occurances.insert(idx, count);
-        }
+
         let mut highest_maj_idx = 0;
         let mut cum_sum = 0;
-        for (idx, count) in cumulative_occurances.iter().rev() {
+        // iterate over match idxs in descending order, stop when count is greater than majority
+        for (idx, count) in cumulative_occurrences.iter().rev() {
             cum_sum += count;
             if cum_sum > maj && *idx > &highest_maj_idx {
                 highest_maj_idx = **idx;
@@ -463,8 +456,7 @@ impl Node {
             for i in self.commit_index + 1..req.leader_commit + 1 {
                 let c = &self.log[i as usize].command;
                 self.state_machine
-                    .entry(c.as_ref().unwrap().key.clone())
-                    .or_insert(c.as_ref().unwrap().value);
+                    .insert(c.as_ref().unwrap().key.clone(), c.as_ref().unwrap().value);
             }
             self.commit_index = cmp::min(req.leader_commit, (self.log.len() - 1) as u64);
         }
@@ -736,9 +728,10 @@ impl Node {
         }
         // apply new log entries to state machine
         for command in &commands {
-            self.state_machine
-                .entry(command.as_ref().unwrap().key.clone())
-                .or_insert(command.as_ref().unwrap().value);
+            self.state_machine.insert(
+                command.as_ref().unwrap().key.clone(),
+                command.as_ref().unwrap().value,
+            );
         }
 
         Ok(Response::new(PutResponse {
