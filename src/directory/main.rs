@@ -30,19 +30,19 @@ impl PeersState {
 #[derive(Debug,Serialize,Deserialize,FromForm)]
 #[serde(crate = "rocket::serde")]
 struct GameData {
-    data:Vec<Vec<Vec<u32>>>
+    data:Vec<Vec<Vec<i32>>>
 }
 
 
 #[post("/put-info", format="json", data="<data>")]
 fn put_info(peers_state: &State<PeersStatePointer>, data: Json<GameData>) {
-    println!("{:?}", data);
+    let log_data = data.into_inner().data;
     let peers_state = peers_state.lock().unwrap();
     let peers = &peers_state.peers;
     let p = peers.clone().into_iter().collect();
     let mut c = Client::new(p);
-    // let key = String::from("key");
-    // c.put(key.clone(), 1);
+    let key = String::from("key");
+    c.put(key.clone(), 1);
 
 }
 
