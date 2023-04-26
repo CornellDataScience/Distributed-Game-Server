@@ -64,7 +64,15 @@ impl Node {
             next_timeout: None,
             config: ServerConfig {
                 timeout: Duration::new(2, 0),
+                batch_size: 5,
+                batch_timeout: Duration::new(5, 0),
             },
+            batched_put_requests: Vec::new(),
+            batched_get_requests: Vec::new(),
+            batch_put_timeout: Some(Instant::now()),
+            batch_get_timeout: Some(Instant::now()),
+            batched_put_senders: Vec::new(),
+            batched_get_senders: Vec::new(),
             next_index: HashMap::new(),
             match_index: HashMap::new(),
         }
@@ -145,7 +153,7 @@ impl Node {
     ///
     /// # Arguments
     /// `self` - Node recieving the client request
-    /// `req` - Request sent by client
+    /// `req` - Get request sent by client
     /// `tx` - GRPC transaction
     async fn handle_get_request(
         &mut self,
@@ -221,7 +229,7 @@ impl Node {
     ///
     /// # Arguments
     /// `self` - Node sending request
-    /// `req` - Request being sent
+    /// `req` - Put request being sent
     /// `tx` - GRPC Transaction
     async fn handle_put_request(
         &mut self,
@@ -241,7 +249,7 @@ impl Node {
             key: req.key,
             value: req.value,
         };
-        tx.send(self.replicate(vec![Some(command)]).await)
+        tx.send(self.replicate(&vec![command]).await)
             .unwrap_or_else(|_| ());
     }
 
@@ -701,17 +709,17 @@ impl Node {
     ///
     async fn replicate(
         &mut self,
-        commands: Vec<Option<Command>>,
+        commands: &Vec<Command>,
     ) -> Result<Response<PutResponse>, Status> {
         // If command received from client: append entry to local log,
         // respond after entry applied to state machine (§5.3)
         // which is once the command has been committed
         println!("calling replicate");
         // push entries onto log
-        for command in &commands {
+        for command in commands {
             self.log.push(LogEntry {
                 // does it make sense to use a clone here
-                command: command.clone(),
+                command: Some(command.clone()),
                 term: self.current_term,
             });
         }
@@ -727,10 +735,10 @@ impl Node {
             self.print_debug();
         }
         // apply new log entries to state machine
-        for command in &commands {
+        for command in commands {
             self.state_machine.insert(
-                command.as_ref().unwrap().key.clone(),
-                command.as_ref().unwrap().value,
+                command.key.clone(),
+                command.value,
             );
         }
 
@@ -738,6 +746,108 @@ impl Node {
             success: true,
             leader_id: Some(self.id.to_string()),
         }))
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    // Batching below
+    ////////////////////////////////////////////////////////////////////////////
+
+    /// Send out batch when time is up or batch is filled
+    async fn start_batched_put(&mut self) {
+        self.batch_put_timeout = Some(Instant::now());
+        loop {
+            let timeout = match self.batch_put_timeout {
+                Some(t) => t.elapsed() >= self.config.batch_timeout,
+                None => false,
+            };
+            if self.batched_put_requests.len() > self.config.batch_size || timeout {
+                let mut log = vec![];
+                for req in &self.batched_put_requests {
+                    let command = Command {
+                        key: (*req.key).to_string(),
+                        value: req.value,
+                    };
+                    log.push(command)
+                }
+
+                while !self.batched_put_senders.is_empty() {
+                    let result: Result<Response<PutResponse>, Status> =
+                        self.replicate(&log).await;
+                    match self.batched_put_senders.pop() {
+                        Some(tx) => tx.send(result).unwrap_or_else(|_| ()),
+                        None => (),
+                    }
+                }
+
+                self.batched_put_requests = Vec::<PutRequest>::new();
+                self.batched_put_senders =
+                    Vec::<oneshot::Sender<Result<Response<PutResponse>, Status>>>::new();
+                self.batch_put_timeout = Some(Instant::now());
+            }
+        }
+    }
+
+    /// Add put requests to batch
+    async fn handle_batched_put_request(
+        &mut self,
+        req: PutRequest,
+        tx: oneshot::Sender<Result<Response<PutResponse>, Status>>,
+    ) {
+        if self.state != State::Leader {
+            tx.send(Ok(Response::new(PutResponse {
+                success: false,
+                leader_id: self.voted_for.clone(),
+            })))
+            .unwrap_or_else(|_| ());
+            return;
+        }
+
+        self.batched_put_requests.push(req);
+        self.batched_put_senders.push(tx);
+    }
+
+    /// Send out get request when time limit is exceeded or batch size is hit
+    async fn start_batched_get(&mut self) {
+        self.batch_get_timeout = Some(Instant::now());
+        loop {
+            let timeout = match self.batch_get_timeout {
+                Some(t) => t.elapsed() >= self.config.batch_timeout,
+                None => false,
+            };
+            if self.batched_get_requests.len() > self.config.batch_size || timeout {
+                while self.batched_get_senders.len() > 0 {
+                    let req = match self.batched_get_requests.pop() {
+                        Some(a) => a,
+                        None => break,
+                    };
+                    let tx = match self.batched_get_senders.pop() {
+                        Some(a) => a,
+                        None => break,
+                    };
+                    self.handle_get_request(req, tx);
+                }
+            }
+        }
+    }
+
+    /// Add get requests to batch
+    async fn handle_batched_get_request(
+        &mut self,
+        req: GetRequest,
+        tx: oneshot::Sender<Result<Response<GetResponse>, Status>>,
+    ) {
+        if self.state != State::Leader {
+            tx.send(Ok(Response::new(GetResponse {
+                value: 0,
+                success: false,
+                leader_id: self.voted_for.clone(),
+            })))
+            .unwrap_or_else(|_| ());
+            return;
+        }
+
+        self.batched_get_requests.push(req);
+        self.batched_get_senders.push(tx);
     }
 }
 

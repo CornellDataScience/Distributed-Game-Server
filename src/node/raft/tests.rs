@@ -401,3 +401,4 @@ async fn test_follower() {
     f.start_follower().await;
     assert_eq!(f.state, State::Candidate);
 }
+
