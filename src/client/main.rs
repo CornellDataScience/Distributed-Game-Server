@@ -1,5 +1,4 @@
 use digs::client::Client;
-use std::fs;
 use std::io::Read;
 #[tokio::main]
 async fn main() {
