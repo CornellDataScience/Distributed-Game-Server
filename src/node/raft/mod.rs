@@ -1,9 +1,15 @@
-use std::{time::{Duration, Instant}, collections::HashMap};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
-use tokio::sync::{oneshot, mpsc};
+use tokio::sync::{mpsc, oneshot};
 use tonic::{transport::Channel, Response, Status};
 
-use super::raft_rpcs::{VoteRequest, VoteResponse, AppendEntriesRequest, PutRequest, AppendEntriesResponse, PutResponse, GetRequest, GetResponse, LogEntry, raft_rpc_client::RaftRpcClient};
+use super::raft_rpcs::{
+    raft_rpc_client::RaftRpcClient, AppendEntriesRequest, AppendEntriesResponse, GetRequest,
+    GetResponse, LogEntry, PutRequest, PutResponse, VoteRequest, VoteResponse,
+};
 mod funcs;
 
 #[derive(Debug)]
@@ -39,6 +45,8 @@ enum State {
 pub struct ServerConfig {
     /// Configurable settings for server
     pub timeout: Duration,
+    batch_size: usize,
+    batch_timeout: Duration,
 }
 
 #[allow(dead_code)]
@@ -55,6 +63,7 @@ pub struct Node {
     // persistent state
     current_term: u64,
     voted_for: Option<String>,
+    voted: bool,
     log: Vec<LogEntry>,
     next_timeout: Option<Instant>,
     config: ServerConfig,
@@ -68,4 +77,13 @@ pub struct Node {
 
     //connections to peers
     connections: HashMap<String, RaftRpcClient<Channel>>,
+
+    // to keep track of batched request
+    batched_put_requests: Vec<PutRequest>,
+    batch_put_timeout: Option<Instant>,
+    batched_put_senders: Vec<oneshot::Sender<Result<Response<PutResponse>, Status>>>,
+
+    batched_get_requests: Vec<GetRequest>,
+    batch_get_timeout: Option<Instant>,
+    batched_get_senders: Vec<oneshot::Sender<Result<Response<GetResponse>, Status>>>,
 }
