@@ -3,6 +3,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use json;
+
 use tokio::sync::{mpsc, oneshot};
 use tonic::{transport::Channel, Response, Status};
 
@@ -58,7 +60,7 @@ pub struct Node {
     commit_index: u64,
     last_applied: u64,
     peers: Vec<String>,
-    state_machine: HashMap<String, i64>,
+    state_machine: HashMap<String, json::JsonValue>,
 
     // persistent state
     current_term: u64,

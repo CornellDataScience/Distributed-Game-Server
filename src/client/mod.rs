@@ -46,7 +46,7 @@ impl Client {
     }
 
     /// Gets the value of a key from the leader
-    pub fn get(&mut self, key: String) -> i64 {
+    pub fn get(&mut self, key: String) -> String {
         let mut dst = self.find_leader();
         let req = GetRequest { key: key.clone() };
         match block_on(dst.get(req)) {
@@ -57,10 +57,10 @@ impl Client {
                     return r.value;
                 } else {
                     // TODO: FIX
-                    return 0;
+                    return json::stringify(0);
                 }
             }
-            _ => return 0,
+            _ => return json::stringify(0),
         }
         // self.get(key)
     }
@@ -83,7 +83,7 @@ impl Client {
                 if !r.success {
                     return self.put(key, value);
                 }
-                return Ok(())
+                return Ok(());
             }
             // Expected Ok, but failed for some reason
             _ => return Err("Put request was not Ok for some reason".to_string()),

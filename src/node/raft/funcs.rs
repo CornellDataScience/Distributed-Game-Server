@@ -165,7 +165,7 @@ impl Node {
             // indicate which leader the client should send the request to.
             return tx
                 .send(Ok(Response::new(GetResponse {
-                    value: 0,
+                    value: json::stringify(0),
                     success: false,
                     leader_id: self.voted_for.clone(),
                 })))
@@ -196,7 +196,11 @@ impl Node {
                             println!("{:?}", self.state_machine);
                             return tx
                                 .send(Ok(Response::new(GetResponse {
-                                    value: *self.state_machine.get(&req.key).unwrap_or(&0),
+                                    value: (*self
+                                        .state_machine
+                                        .get(&req.key)
+                                        .unwrap_or(&json::JsonValue::Null))
+                                    .to_string(),
                                     success: true,
                                     leader_id: Some(self.id.clone()),
                                 })))
@@ -206,7 +210,7 @@ impl Node {
                         self.to_follower(r.term);
                         return tx
                             .send(Ok(Response::new(GetResponse {
-                                value: 0,
+                                value: json::stringify(0),
                                 success: false,
                                 leader_id: Some(self.id.clone()),
                             })))
@@ -218,7 +222,7 @@ impl Node {
             }
         }
         tx.send(Ok(Response::new(GetResponse {
-            value: 0,
+            value: json::stringify(0),
             success: false,
             leader_id: Some(self.id.clone()),
         })))
@@ -312,7 +316,7 @@ impl Node {
             self.to_follower(r.term);
             return;
         }
-        // TODO: I think we don't need nextIndex if we just send the entries 
+        // TODO: I think we don't need nextIndex if we just send the entries
         // between matching index and end of leader log. Might be an issue if nodes are
         // missing a significant number of entries though
         // in this case may want to send no more than some number of entries.
@@ -327,8 +331,7 @@ impl Node {
         } else {
             // failed due to log inconsistency
             // set nextindex to mismatch index
-            self.match_index
-                .entry(responder.to_string()).or_insert(0);
+            self.match_index.entry(responder.to_string()).or_insert(0);
             self.next_index
                 .insert(responder.to_string(), r.mismatch_index.unwrap());
         }
@@ -463,8 +466,10 @@ impl Node {
             println!("ae update commit and apply log entries");
             for i in self.commit_index + 1..req.leader_commit + 1 {
                 let c = &self.log[i as usize].command;
-                self.state_machine
-                    .insert(c.as_ref().unwrap().key.clone(), c.as_ref().unwrap().value);
+                self.state_machine.insert(
+                    c.as_ref().unwrap().key.clone(),
+                    c.as_ref().unwrap().value.into(),
+                );
             }
             self.commit_index = cmp::min(req.leader_commit, (self.log.len() - 1) as u64);
         }
@@ -736,10 +741,8 @@ impl Node {
         }
         // apply new log entries to state machine
         for command in commands {
-            self.state_machine.insert(
-                command.key.clone(),
-                command.value,
-            );
+            self.state_machine
+                .insert(command.key.clone(), command.value.into());
         }
 
         Ok(Response::new(PutResponse {
@@ -771,8 +774,7 @@ impl Node {
                 }
 
                 while !self.batched_put_senders.is_empty() {
-                    let result: Result<Response<PutResponse>, Status> =
-                        self.replicate(&log).await;
+                    let result: Result<Response<PutResponse>, Status> = self.replicate(&log).await;
                     match self.batched_put_senders.pop() {
                         Some(tx) => tx.send(result).unwrap_or_else(|_| ()),
                         None => (),
@@ -838,7 +840,7 @@ impl Node {
     ) {
         if self.state != State::Leader {
             tx.send(Ok(Response::new(GetResponse {
-                value: 0,
+                value: json::stringify(0),
                 success: false,
                 leader_id: self.voted_for.clone(),
             })))
