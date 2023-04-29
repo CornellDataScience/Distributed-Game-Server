@@ -62,6 +62,7 @@ async fn main() {
             _ => continue,
         };
     }
-    let mut node = raft::Node::new(server_addr, peers, rx);
+    let mut node = raft::Node::new(server_addr, rx);
+    node.set_peers(peers);
     node.start().await;
 }

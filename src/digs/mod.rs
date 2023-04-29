@@ -20,6 +20,8 @@ pub struct Digs {
 /// use case
 /// if starting new server, will need to specify server ips and register to directory
 /// if starting from existing server, join server through directory
+/// May want a GUI/CLI which asks user whether they would like to start new server or join existing
+/// 
 impl Digs {
     /// start running Digs on port, with peers specified in peers
     pub fn new(port: &str, dir_ip: &str, game_name: &str) -> Self {
@@ -59,15 +61,18 @@ impl Digs {
 
     // TODO: tokio::spawn client vs server in different threads?
     // TODO: should there be a function that should be called to cleanup when server and such is shut down?
-    pub async fn start(&mut self) {
+    pub async fn start(mut self) {
+        println!("starting digs...");
         println!("connecting to directory...");
-        println!("starting server...");
-        // start RPC server in new thread
-        // socket is ip addr but parsed into a socketaddr
+
+        println!("starting local server...");
+        // start RPC server+raft server and client on different threads
+        // main thread is the game which makes get/put reqs
         tokio::spawn(rpc::start_rpc_server(self.socket, self.rpc_handler));
         self.server.start().await;
-        println!("client connecting to server...");
+        println!("client connecting to servers...");
         self.client.start();
+        println!("digs started!");
     }
 
     pub async fn get(&mut self, key: String) {
