@@ -18,18 +18,24 @@ pub struct Client {
 
 impl Client {
     /// Creates a new client from a vector of server nodes
-    pub fn new(peers: Vec<String>) -> Self {
-        let mut connections = HashMap::new();
-        peers.clone().into_iter().for_each(|ip| {
-            let future = block_on(RaftRpcClient::connect(ip.clone()));
-            connections.insert(ip.clone(), future.unwrap());
-        });
+    pub fn new() -> Self {
         return Client {
-            peers: peers,
-            connections: connections,
+            peers: Vec::new(),
+            connections: HashMap::new(),
             current_leader: None,
         };
     }
+    pub fn set_peers(&mut self, peers: Vec<String>) {
+        self.peers = peers;
+    }
+    /// creates a connection to each peer
+    pub fn start(&mut self) {
+        self.peers.clone().into_iter().for_each(|ip| {
+            let future = block_on(RaftRpcClient::connect(ip.clone()));
+            self.connections.insert(ip.clone(), future.unwrap());
+        });
+    }
+
     /// If current leader unknown, finds the leader of the server by sending a
     /// message to a random server in the cluster
     fn find_leader(&mut self) -> RaftRpcClient<Channel> {

@@ -40,13 +40,13 @@ impl Node {
     ///        in AE, prev_log_index will be None if leader had never sent an AE to the follower
     /// * `match_index` - The highest index log entry where a follower is consistent with the leader
 
-    pub fn new(id: String, peers: Vec<String>, mailbox: mpsc::UnboundedReceiver<Event>) -> Self {
+    pub fn new(id: String, mailbox: mpsc::UnboundedReceiver<Event>) -> Self {
         Self {
             id: id,
             state: State::Follower,
             commit_index: 0,
             last_applied: 0,
-            peers: peers,
+            peers: vec![],
             state_machine: HashMap::new(),
             current_term: 1,
             voted_for: None,
@@ -76,6 +76,10 @@ impl Node {
             next_index: HashMap::new(),
             match_index: HashMap::new(),
         }
+    }
+
+    pub fn set_peers(&mut self, peers: Vec<String>) {
+        self.peers = peers;
     }
 
     // ------------------------------- HELPERS --------------------------------

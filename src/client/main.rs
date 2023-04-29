@@ -1,5 +1,6 @@
 use digs::client::Client;
 use std::fs;
+
 #[tokio::main]
 async fn main() {
     // set up a client and make 2 requests, a put then a get
