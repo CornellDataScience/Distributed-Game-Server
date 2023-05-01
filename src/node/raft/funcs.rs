@@ -5,6 +5,7 @@ use std::{
 };
 
 use futures::{executor::block_on, future::select_all};
+use json::JsonValue;
 use rand::Rng;
 use tokio::sync::{mpsc, oneshot};
 use tonic::{Request, Response, Status};
@@ -54,8 +55,7 @@ impl Node {
             // dummy entry to make computations easier
             log: vec![LogEntry {
                 command: Some(Command {
-                    key: "$".to_string(),
-                    value: 0,
+                    data: r#"{"$" : 0 }"#.to_string(),
                 }),
                 term: 0,
             }],
@@ -250,11 +250,18 @@ impl Node {
             return;
         }
         let command = Command {
-            key: req.key,
-            value: req.value,
+            data: req.data,
         };
         tx.send(self.replicate(&vec![command]).await)
             .unwrap_or_else(|_| ());
+    }
+
+    /// parses jsonstr into the state machine
+    fn add_json_entries(&mut self, jstr: &String) {
+        let parsed = json::parse(jstr).unwrap();
+        for (k, v) in parsed.entries() {
+            self.state_machine.insert(k.to_string(), v.clone());
+        }
     }
 
     // --------------------------- APPEND ENTRIES -----------------------------
@@ -465,11 +472,8 @@ impl Node {
         if req.leader_commit > self.commit_index {
             println!("ae update commit and apply log entries");
             for i in self.commit_index + 1..req.leader_commit + 1 {
-                let c = &self.log[i as usize].command;
-                self.state_machine.insert(
-                    c.as_ref().unwrap().key.clone(),
-                    c.as_ref().unwrap().value.into(),
-                );
+                let c = self.log[i as usize].command.clone();
+                self.add_json_entries(&c.as_ref().unwrap().data);
             }
             self.commit_index = cmp::min(req.leader_commit, (self.log.len() - 1) as u64);
         }
@@ -741,8 +745,7 @@ impl Node {
         }
         // apply new log entries to state machine
         for command in commands {
-            self.state_machine
-                .insert(command.key.clone(), command.value.into());
+            self.add_json_entries(&command.data);
         }
 
         Ok(Response::new(PutResponse {
@@ -767,8 +770,7 @@ impl Node {
                 let mut log = vec![];
                 for req in &self.batched_put_requests {
                     let command = Command {
-                        key: (*req.key).to_string(),
-                        value: req.value,
+                        data: req.data.clone()
                     };
                     log.push(command)
                 }
