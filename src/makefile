@@ -8,7 +8,7 @@ node2:
 
 node3:
 	clear
-	cargo r --bin node 8083 localhost
+	cargo r --bin node 8089 localhost
 
 client1:
 	clear
