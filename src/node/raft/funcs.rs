@@ -69,8 +69,7 @@ impl Node {
             },
             batched_put_requests: Vec::new(),
             batched_get_requests: Vec::new(),
-            batch_put_timeout: Some(Instant::now()),
-            batch_get_timeout: Some(Instant::now()),
+            batch_timeout: Some(Instant::now()),
             batched_put_senders: Vec::new(),
             batched_get_senders: Vec::new(),
             next_index: HashMap::new(),
@@ -249,6 +248,9 @@ impl Node {
             key: req.key,
             value: req.value,
         };
+
+        println!("{:?}", &command);
+
         tx.send(self.replicate(&vec![command]).await)
             .unwrap_or_else(|_| ());
     }
@@ -593,8 +595,8 @@ impl Node {
             Event::AppendEntries { req, tx } => tx
                 .send(self.handle_append_entries(tonic::Request::new(req)))
                 .unwrap_or_else(|_| ()),
-            Event::ClientGetRequest { req, tx } => return self.handle_get_request(req, tx).await,
-            Event::ClientPutRequest { req, tx } => return self.handle_put_request(req, tx).await,
+            Event::ClientGetRequest { req, tx } => return self.handle_batched_get_request(req, tx).await,
+            Event::ClientPutRequest { req, tx } => return self.handle_batched_put_request(req, tx).await,
         }
     }
 
@@ -641,9 +643,21 @@ impl Node {
         println!("starting leader in term {:?}", self.current_term);
         // commit no-op entry at the start of term
         // self.replicate(None);
+        self.batch_timeout = Some(Instant::now());
         loop {
             if self.state != State::Leader {
                 return;
+            }
+
+            let timeout = match self.batch_timeout {
+                Some(t) => t.elapsed() >= self.config.batch_timeout,
+                None => false,
+            };
+
+            if timeout || self.batched_put_requests.len() >= self.config.batch_size || self.batched_get_requests.len() >= self.config.batch_size{
+                self.start_batched_put().await;
+                self.start_batched_get().await;
+                self.batch_timeout = Some(Instant::now());
             }
             // TODO: If last log index ≥ nextIndex for a follower: send
             // AppendEntries RPC with log entries starting at nextIndex
@@ -754,37 +768,34 @@ impl Node {
 
     /// Send out batch when time is up or batch is filled
     async fn start_batched_put(&mut self) {
-        self.batch_put_timeout = Some(Instant::now());
-        loop {
-            let timeout = match self.batch_put_timeout {
-                Some(t) => t.elapsed() >= self.config.batch_timeout,
-                None => false,
+        println!("Handling put batch");
+        let mut log = vec![];
+        for req in &self.batched_put_requests {
+            let command = Command {
+                key: (*req.key).to_string(),
+                value: req.value,
             };
-            if self.batched_put_requests.len() > self.config.batch_size || timeout {
-                let mut log = vec![];
-                for req in &self.batched_put_requests {
-                    let command = Command {
-                        key: (*req.key).to_string(),
-                        value: req.value,
-                    };
-                    log.push(command)
-                }
-
-                while !self.batched_put_senders.is_empty() {
-                    let result: Result<Response<PutResponse>, Status> =
-                        self.replicate(&log).await;
-                    match self.batched_put_senders.pop() {
-                        Some(tx) => tx.send(result).unwrap_or_else(|_| ()),
-                        None => (),
-                    }
-                }
-
-                self.batched_put_requests = Vec::<PutRequest>::new();
-                self.batched_put_senders =
-                    Vec::<oneshot::Sender<Result<Response<PutResponse>, Status>>>::new();
-                self.batch_put_timeout = Some(Instant::now());
-            }
+            log.push(command)
         }
+
+        println!("Log: {:?}", self.log);
+        println!("Size: {:?}", self.batched_put_senders);
+
+        while !self.batched_put_senders.is_empty() {
+            let result: Result<Response<PutResponse>, Status> =
+                self.replicate(&log).await;
+            println!("Result: {:?}", result);
+            match self.batched_put_senders.pop() {
+                Some(tx) => tx.send(result).unwrap_or_else(|_| ()),
+                None => (),
+            }
+            
+        }
+
+        self.batched_put_requests = Vec::<PutRequest>::new();
+        self.batched_put_senders =
+            Vec::<oneshot::Sender<Result<Response<PutResponse>, Status>>>::new();
+        println!("Finished handling put batch")
     }
 
     /// Add put requests to batch
@@ -793,7 +804,9 @@ impl Node {
         req: PutRequest,
         tx: oneshot::Sender<Result<Response<PutResponse>, Status>>,
     ) {
+        println!("Putting");
         if self.state != State::Leader {
+            println!("rerouting");
             tx.send(Ok(Response::new(PutResponse {
                 success: false,
                 leader_id: self.voted_for.clone(),
@@ -801,32 +814,26 @@ impl Node {
             .unwrap_or_else(|_| ());
             return;
         }
-
+        println!("this is leader");
         self.batched_put_requests.push(req);
         self.batched_put_senders.push(tx);
+        println!("put in batch");
+        println!("Batch Put Senders: {:?}", self.batched_put_senders);
+
     }
 
     /// Send out get request when time limit is exceeded or batch size is hit
     async fn start_batched_get(&mut self) {
-        self.batch_get_timeout = Some(Instant::now());
-        loop {
-            let timeout = match self.batch_get_timeout {
-                Some(t) => t.elapsed() >= self.config.batch_timeout,
-                None => false,
+        while self.batched_get_senders.len() > 0 {
+            let req = match self.batched_get_requests.pop() {
+                Some(a) => a,
+                None => break,
             };
-            if self.batched_get_requests.len() > self.config.batch_size || timeout {
-                while self.batched_get_senders.len() > 0 {
-                    let req = match self.batched_get_requests.pop() {
-                        Some(a) => a,
-                        None => break,
-                    };
-                    let tx = match self.batched_get_senders.pop() {
-                        Some(a) => a,
-                        None => break,
-                    };
-                    self.handle_get_request(req, tx);
-                }
-            }
+            let tx = match self.batched_get_senders.pop() {
+                Some(a) => a,
+                None => break,
+            };
+            self.handle_get_request(req, tx).await;
         }
     }
 

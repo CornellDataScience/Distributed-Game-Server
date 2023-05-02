@@ -79,11 +79,11 @@ pub struct Node {
     connections: HashMap<String, RaftRpcClient<Channel>>,
 
     // to keep track of batched request
+    batch_timeout: Option<Instant>,
+    
     batched_put_requests: Vec<PutRequest>,
-    batch_put_timeout: Option<Instant>,
     batched_put_senders: Vec<oneshot::Sender<Result<Response<PutResponse>, Status>>>,
 
     batched_get_requests: Vec<GetRequest>,
-    batch_get_timeout: Option<Instant>,
     batched_get_senders: Vec<oneshot::Sender<Result<Response<GetResponse>, Status>>>,
 }
