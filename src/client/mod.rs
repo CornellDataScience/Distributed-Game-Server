@@ -52,7 +52,7 @@ impl Client {
     }
 
     /// Gets the value of a key from the leader
-    pub fn get(&mut self, key: String) -> i64 {
+    pub fn get(&mut self, key: String) -> String {
         let mut dst = self.find_leader();
         let req = GetRequest { key: key.clone() };
         match block_on(dst.get(req)) {
@@ -62,23 +62,22 @@ impl Client {
                 if r.success {
                     return r.value;
                 } else {
-                    // TODO: FIX
-                    return 0;
+                    // TODO: FIX FAILURE CASES
+                    return json::stringify(0);
                 }
             }
-            _ => return 0,
+            _ => return json::stringify(0),
         }
         // self.get(key)
     }
 
     /// Pushes a key value pair to the leader
-    pub fn put(&mut self, key: String, value: i64) -> Result<(), String> {
+    pub fn put(&mut self, data: &String) -> Result<(), String> {
         let mut dst = self.find_leader();
         println!("putting {:?}", self.current_leader);
 
         let req = PutRequest {
-            key: key.clone(),
-            value: value,
+            data: data.to_string(),
             serial_number: 0,
         };
         match block_on(dst.put(req)) {
@@ -87,9 +86,9 @@ impl Client {
                 self.current_leader = r.leader_id;
                 // try finding the leader again if put unsuccessful
                 if !r.success {
-                    return self.put(key, value);
+                    return self.put(data);
                 }
-                return Ok(())
+                return Ok(());
             }
             // Expected Ok, but failed for some reason
             _ => return Err("Put request was not Ok for some reason".to_string()),
