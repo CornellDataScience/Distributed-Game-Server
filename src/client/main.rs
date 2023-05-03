@@ -12,8 +12,13 @@ async fn main() {
     let mut c = Client::new(peers);
     let key1 = String::from("key1");
     let key2 = String::from("key2");
-    c.put(key1.clone(), 1);
-    // c.put(key2.clone(), 2);
-    println!("{}", c.get(key1.clone()));
-    // println!("{}", c.get(key2.clone()));
+    
+    c.put(key1.clone(), 1).await;
+    c.put(key2.clone(), 2).await;
+    // tokio::join!(
+    //     c.get(key1.clone()),
+    //     c.get(key2.clone()),
+    // );
+    println!("{:?}", c.get(key1.clone()).await);
+    println!("{:?}", c.get(key2.clone()).await);
 }

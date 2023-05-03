@@ -6,6 +6,8 @@ use tonic::transport::Channel;
 
 use self::raft_rpc::{raft_rpc_client::RaftRpcClient, GetRequest, PutRequest};
 
+use async_recursion::async_recursion;
+
 pub mod raft_rpc {
     tonic::include_proto!("raftrpc");
 }
@@ -46,7 +48,7 @@ impl Client {
     }
 
     /// Gets the value of a key from the leader
-    pub fn get(&mut self, key: String) -> i64 {
+    pub async fn get(&mut self, key: String) -> i64 {
         let mut dst = self.find_leader();
         let req = GetRequest { key: key.clone() };
         match block_on(dst.get(req)) {
@@ -66,7 +68,8 @@ impl Client {
     }
 
     /// Pushes a key value pair to the leader
-    pub fn put(&mut self, key: String, value: i64) -> Result<(), String> {
+    #[async_recursion]
+    pub async fn put(&mut self, key: String, value: i64) -> Result<(), String> {
         let mut dst = self.find_leader();
         println!("putting {:?}", self.current_leader);
 
@@ -81,7 +84,7 @@ impl Client {
                 self.current_leader = r.leader_id;
                 // try finding the leader again if put unsuccessful
                 if !r.success {
-                    return self.put(key, value);
+                    return self.put(key, value).await;
                 }
                 return Ok(())
             }

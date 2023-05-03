@@ -65,7 +65,7 @@ impl Node {
             config: ServerConfig {
                 timeout: Duration::new(2, 0),
                 batch_size: 5,
-                batch_timeout: Duration::new(5, 0),
+                batch_timeout: Duration::new(10, 0),
             },
             batched_put_requests: Vec::new(),
             batched_get_requests: Vec::new(),
@@ -655,6 +655,8 @@ impl Node {
             };
 
             if timeout || self.batched_put_requests.len() >= self.config.batch_size || self.batched_get_requests.len() >= self.config.batch_size{
+                println!("Put Request Size: {:?}", self.batched_put_requests.len());
+                println!("Get Request Size: {:?}", self.batched_get_requests.len());
                 self.start_batched_put().await;
                 self.start_batched_get().await;
                 self.batch_timeout = Some(Instant::now());
@@ -808,6 +810,7 @@ impl Node {
         }
         self.batched_put_requests.push(req);
         self.batched_put_senders.push(tx);
+        println!("{:?}", self.batched_put_requests);
 
     }
 
