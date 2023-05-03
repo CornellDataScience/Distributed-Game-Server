@@ -768,7 +768,6 @@ impl Node {
 
     /// Send out batch when time is up or batch is filled
     async fn start_batched_put(&mut self) {
-        println!("Handling put batch");
         let mut log = vec![];
         for req in &self.batched_put_requests {
             let command = Command {
@@ -778,13 +777,9 @@ impl Node {
             log.push(command)
         }
 
-        println!("Log: {:?}", self.log);
-        println!("Size: {:?}", self.batched_put_senders);
-
         while !self.batched_put_senders.is_empty() {
             let result: Result<Response<PutResponse>, Status> =
                 self.replicate(&log).await;
-            println!("Result: {:?}", result);
             match self.batched_put_senders.pop() {
                 Some(tx) => tx.send(result).unwrap_or_else(|_| ()),
                 None => (),
@@ -795,7 +790,6 @@ impl Node {
         self.batched_put_requests = Vec::<PutRequest>::new();
         self.batched_put_senders =
             Vec::<oneshot::Sender<Result<Response<PutResponse>, Status>>>::new();
-        println!("Finished handling put batch")
     }
 
     /// Add put requests to batch
@@ -804,9 +798,7 @@ impl Node {
         req: PutRequest,
         tx: oneshot::Sender<Result<Response<PutResponse>, Status>>,
     ) {
-        println!("Putting");
         if self.state != State::Leader {
-            println!("rerouting");
             tx.send(Ok(Response::new(PutResponse {
                 success: false,
                 leader_id: self.voted_for.clone(),
@@ -814,11 +806,8 @@ impl Node {
             .unwrap_or_else(|_| ());
             return;
         }
-        println!("this is leader");
         self.batched_put_requests.push(req);
         self.batched_put_senders.push(tx);
-        println!("put in batch");
-        println!("Batch Put Senders: {:?}", self.batched_put_senders);
 
     }
 
