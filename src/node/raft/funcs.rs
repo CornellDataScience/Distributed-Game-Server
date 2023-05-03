@@ -249,9 +249,7 @@ impl Node {
             .unwrap_or_else(|_| ());
             return;
         }
-        let command = Command {
-            data: req.data,
-        };
+        let command = Command { data: req.data };
         tx.send(self.replicate(&vec![command]).await)
             .unwrap_or_else(|_| ());
     }
@@ -770,7 +768,7 @@ impl Node {
                 let mut log = vec![];
                 for req in &self.batched_put_requests {
                     let command = Command {
-                        data: req.data.clone()
+                        data: req.data.clone(),
                     };
                     log.push(command)
                 }
