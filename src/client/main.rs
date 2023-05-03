@@ -11,6 +11,6 @@ async fn main() {
         .collect();
     let mut c = Client::new(peers);
     let key = String::from("key");
-    c.put(key.clone(), 1);
+    c.put(&r#"{ "key" : 1 }"#.to_string());
     println!("{}", c.get(key.clone()));
 }
