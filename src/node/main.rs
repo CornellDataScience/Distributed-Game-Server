@@ -1,6 +1,6 @@
 use digs::node::{raft, rpc};
 use local_ip_address::local_ip;
-use std::{env, fs, io, net::SocketAddr};
+use std::{env, io::{self, Read}, net::SocketAddr};
 use tokio::sync::mpsc;
 
 #[tokio::main]
@@ -30,10 +30,13 @@ async fn main() {
     };
 
     // read from peers.txt to get the ip addresses of the other server nodes, ignoring its own address
-    // assumes user is running from src
-    let contents = fs::read_to_string("../data/peers.txt").expect("cannot read file");
-    let peers: Vec<String> = contents
-        .split("\n")
+    let mut res = reqwest::blocking::get("http://localhost:8000/get-peers")
+        .expect("Could not connect to directory server");
+    let mut body = String::new();
+    res.read_to_string(&mut body).unwrap();
+    let peers: Vec<String> = serde_json::from_str::<Vec<String>>(&body)
+        .expect("Could not parse JSON response")
+        .into_iter()
         .filter(|addr| !addr.is_empty() && addr != &server_addr)
         .map(|addr| String::from("http://") + &String::from(addr))
         .collect();
