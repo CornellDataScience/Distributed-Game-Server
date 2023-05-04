@@ -14,12 +14,13 @@ type PeersStatePointer = Arc<Mutex<PeersState>>;
 
 impl PeersState {
     fn new() -> PeersStatePointer {
-        let contents = fs::read_to_string("data/peers.txt")
-            .expect("cannot read file");
-        let peers: HashSet<String> = contents
-            .split("\n")
-            .map(|addr| String::from(addr))
-            .collect();
+        // let contents = fs::read_to_string("data/peers.txt")
+        //     .expect("cannot read file");
+        // let peers: HashSet<String> = contents
+        //     .split("\n")
+        //     .map(|addr| String::from(addr))
+        //     .collect();
+        let peers = HashSet::new();
         Arc::new(Mutex::new(PeersState { peers: peers }))
     }
 }

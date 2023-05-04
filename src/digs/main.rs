@@ -9,8 +9,8 @@ async fn main() {
     // cargo r --bin digs port dir_ip
     // directory hosted at http://localhost:8000/
     let args: Vec<String> = env::args().collect();
-    let port = &args[2];
-    let dir_ip = &args[3];
+    let port = &args[1];
+    let dir_ip = &args[2];
 
     let mut digs = Digs::new(&port, &dir_ip); // GUI code could go in here maybe?
 

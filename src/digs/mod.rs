@@ -60,7 +60,7 @@ impl Digs {
     // wait until all participating nodes have registered with the directory
     // get peers from directory and start client and server
     pub fn register_node(&mut self){
-        let mut add_res = reqwest::blocking::get(&format!("{}{}{}", self.dir_ip, "get-peers", self.id))
+        let mut add_res = reqwest::blocking::get(&format!("{}{}{}", self.dir_ip, "get-peers/", self.id))
             .expect("Could not connect to directory server");
         let mut body = String::new();
         add_res.read_to_string(&mut body).unwrap();
@@ -73,7 +73,7 @@ impl Digs {
     pub async fn start(mut self) {
         println!("starting digs...");
         println!("connecting to directory...");
-        let mut res = reqwest::blocking::get(&format!("{}get-peers", self.dir_ip))
+        let mut res = reqwest::blocking::get(&format!("{}get-peers/", self.dir_ip))
             .expect("Could not connect to directory server");
         let mut body = String::new();
         res.read_to_string(&mut body).unwrap();
