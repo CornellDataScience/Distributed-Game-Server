@@ -1,5 +1,16 @@
 use digs::client::Client;
-use std::io::Read;
+use std::{io::Read, fs};
+
+fn get_peers_from_file() -> Vec<String>{
+    let contents = fs::read_to_string("../data/peers.txt").expect("cannot read file");
+    let peers: Vec<String> = contents
+        .split("\n")
+        .filter(|addr| !addr.is_empty())
+        .map(|addr| String::from("http://") + &String::from(addr))
+        .collect();
+    peers
+}
+
 #[tokio::main]
 async fn main() {
     // set up a client and make 2 requests, a put then a get
@@ -15,6 +26,6 @@ async fn main() {
         .collect();
     let mut c = Client::new(peers);
     let key = String::from("key");
-    c.put(key.clone(), 1);
+    c.put(&r#"{ "key" : 1 }"#.to_string());
     println!("{}", c.get(key.clone()));
 }

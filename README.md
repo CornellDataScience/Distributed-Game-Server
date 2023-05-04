@@ -33,3 +33,6 @@ protobuf3
 
 `apt-get protobuf-compiler` on Ubuntu may not get the right version. 
 Install a precompiled binary of version 3.15.8+ from https://grpc.io/docs/protoc-installation/
+
+reqwest depends on openssl which may require installing additional tooling
+https://docs.rs/openssl/0.10.16/openssl/#automatic
