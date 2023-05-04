@@ -1,15 +1,21 @@
+use std::env;
+
 use digs::digs::Digs;
 
-fn main() {
+// there may be some weird things with tokio async/sync
+#[tokio::main]
+async fn main() {
     // gui/cli startup code
-    // cargo r --bin digs --new dir_ip game_name
+    // cargo r --bin digs port dir_ip
+    // directory hosted at http://localhost:8000/
+    let args: Vec<String> = env::args().collect();
+    let port = &args[2];
+    let dir_ip = &args[3];
 
-    let mut digs = Digs::new("", "", ""); // GUI code could go in here maybe?
-    match make_new {
-        true => digs.register_server(peers, dir_ip, game_name),
-        false => digs.join_server(dir_ip, game_name),
-    }
-    digs.start();
+    let mut digs = Digs::new(&port, &dir_ip); // GUI code could go in here maybe?
+
+    digs.register_node();
+    digs.start().await;
 
     // game code
     // digs.put()
