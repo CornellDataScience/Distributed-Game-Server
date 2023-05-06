@@ -5,6 +5,7 @@ use std::{env, thread, time};
 use std::io::Read;
 use digs::digs::Digs;
 use digs::game::{Snake, Dir};
+use local_ip_address::local_ip;
 
 const SQUARES: i32 = 50;
 
@@ -20,7 +21,8 @@ async fn main() {
     let mut snake = Snake::new();
     let mut t = get_time();
     // this might be important for fixing start times
-    let mut digs = start_digs(port, dir_ip);
+    let server_addr = format!("{}:{}", local_ip().unwrap().to_string(), &port);
+    register_node(server_addr, dir_ip.to_string());
     loop {
         let mut res = reqwest::blocking::get(&format!("{}{}", dir_ip, "get-peers/"))
             .expect("Could not connect to directory server");
@@ -28,10 +30,10 @@ async fn main() {
         res.read_to_string(&mut body).unwrap();
         let peers_list : HashSet<String> = serde_json::from_str(&body).unwrap();
         if peers_list.len() >= 3 {
-            digs = connect_peers(digs);
             break;
         }
     }
+    let mut digs = start_digs(port, dir_ip);
     thread::sleep(time::Duration::from_secs(5));
     loop {
         if !endgame {
@@ -49,15 +51,17 @@ async fn main() {
     }
 }
 
-#[tokio::main]
-async fn start_digs(port: &str, dir_ip: &str) -> Digs {
-    let mut digs = Digs::new(&port, &dir_ip); // GUI code could go in here maybe?
-    digs.register_node();
-    return digs;
+pub fn register_node(server_ip :String, dir_ip:String) {
+    let mut add_res = reqwest::blocking::get(&format!("{}{}{}", dir_ip, "add-peer/", server_ip))
+            .expect("Could not connect to directory server");
+    let mut body = String::new();
+    add_res.read_to_string(&mut body).unwrap();
+    println!("Result from adding own id {}", body);
 }
 
 #[tokio::main]
-async fn connect_peers(mut digs : Digs) -> Digs {
+async fn start_digs(port: &str, dir_ip: &str) -> Digs {
+    let mut digs = Digs::new(&port, &dir_ip); // GUI code could go in here maybe?
     digs.start().await;
     return digs;
 }

@@ -59,14 +59,14 @@ impl Digs {
     // register self on directory
     // wait until all participating nodes have registered with the directory
     // get peers from directory and start client and server
-    pub fn register_node(&mut self){
-        let mut add_res = reqwest::blocking::get(&format!("{}{}{}", self.dir_ip, "add-peer/", self.id))
-            .expect("Could not connect to directory server");
-        let mut body = String::new();
-        add_res.read_to_string(&mut body).unwrap();
-        println!("Result from adding own id {}", body);
-        // wait for all rpc servers to start - implement on game side
-    }
+    // pub fn register_node(&mut self){
+    //     let mut add_res = reqwest::blocking::get(&format!("{}{}{}", self.dir_ip, "add-peer/", self.id))
+    //         .expect("Could not connect to directory server");
+    //     let mut body = String::new();
+    //     add_res.read_to_string(&mut body).unwrap();
+    //     println!("Result from adding own id {}", body);
+    //     // wait for all rpc servers to start - implement on game side
+    // }
 
     // TODO: tokio::spawn client vs server in different threads?
     // TODO: should there be a function that should be called to cleanup when server and such is shut down?
@@ -90,9 +90,9 @@ impl Digs {
         // i think this will also resolve issues that may arise with start() being async
         // but how to implement Send?
         // main thread is the game which makes get/put reqs
-        self.server.start().await;
         println!("client connecting to servers...");
         self.client.start();
+        self.server.start().await;
         println!("digs started!");
     }
 
