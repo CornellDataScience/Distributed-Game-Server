@@ -31,6 +31,7 @@ async fn main() {
             break;
         }
     }
+    
     loop {
         if !endgame {
             change_direction(&mut snake);

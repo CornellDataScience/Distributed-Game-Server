@@ -90,7 +90,7 @@ impl Digs {
         // i think this will also resolve issues that may arise with start() being async
         // but how to implement Send?
         // main thread is the game which makes get/put reqs
-        self.server.start();
+        self.server.start().await;
         println!("client connecting to servers...");
         self.client.start();
         println!("digs started!");
