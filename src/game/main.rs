@@ -1,7 +1,7 @@
 
 use macroquad::prelude::*;
 use std::collections::HashSet;
-use std::env;
+use std::{env, thread, time};
 use std::io::Read;
 use digs::digs::Digs;
 use digs::game::{Snake, Dir};
@@ -28,10 +28,11 @@ async fn main() {
         res.read_to_string(&mut body).unwrap();
         let peers_list : HashSet<String> = serde_json::from_str(&body).unwrap();
         if peers_list.len() >= 3 {
+            digs = connect_peers(digs);
             break;
         }
     }
-    
+    thread::sleep(time::Duration::from_secs(5));
     loop {
         if !endgame {
             change_direction(&mut snake);
@@ -52,6 +53,11 @@ async fn main() {
 async fn start_digs(port: &str, dir_ip: &str) -> Digs {
     let mut digs = Digs::new(&port, &dir_ip); // GUI code could go in here maybe?
     digs.register_node();
+    return digs;
+}
+
+#[tokio::main]
+async fn connect_peers(mut digs : Digs) -> Digs {
     digs.start().await;
     return digs;
 }

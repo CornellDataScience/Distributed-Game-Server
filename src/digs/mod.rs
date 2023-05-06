@@ -83,7 +83,7 @@ impl Digs {
             .filter(|addr| !addr.is_empty())
             .map(|addr| String::from("http://") + &addr)
             .collect();
-            println!("starting local server...");
+        println!("starting local server...");
         self.server.set_peers(peers.clone());
         self.client.set_peers(peers);
         // may want to start raft server and client on different threads using the tokio scheduler
