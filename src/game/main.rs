@@ -14,20 +14,21 @@ async fn main() {
     let port = &args[1];
     let dir_ip = &args[2];
     let mut endgame = false;
-    // let mut digs = Digs::new(&port, &dir_ip); // GUI code could go in here maybe?
+    let mut digs = Digs::new(&port, &dir_ip); // GUI code could go in here maybe?
     let mut snake = Snake::new();
     let mut t = get_time();
     // this might be important for fixing start times
-    // digs.register_node();
-    // digs.start().await;
+    digs.register_node();
+    digs.start().await;
     loop {
         if !endgame {
             change_direction(&mut snake);
             if get_time() - t > 0.1 {
                 t = get_time();
                 move_snake(&mut snake);
+                let serialized = serde_json::to_string(&snake).unwrap();
                 endgame = check_collision(&mut snake);
-            }
+            }   
         } 
         draw_snake(&mut snake);
         next_frame().await;

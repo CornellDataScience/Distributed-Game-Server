@@ -19,7 +19,8 @@ pub struct Digs {
 /// if starting from existing server, join server through directory
 /// May want a GUI/CLI which asks user whether they would like to start new server or join existing
 impl Digs {
-    pub fn new(port: &str, dir_ip: &str) -> Self {
+    #[tokio::main]
+    pub async fn new(port: &str, dir_ip: &str) -> Self {
         let (id, socket) = util::makeSocket(port.to_string());
         let c = Client::new();
         // could try to combine rpc handler into node
@@ -90,7 +91,7 @@ impl Digs {
         // i think this will also resolve issues that may arise with start() being async
         // but how to implement Send?
         // main thread is the game which makes get/put reqs
-        self.server.start().await;
+        self.server.start();
         println!("client connecting to servers...");
         self.client.start();
         println!("digs started!");

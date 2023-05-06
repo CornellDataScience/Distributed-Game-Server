@@ -1,20 +1,21 @@
 // adapted https://github.com/not-fl3/macroquad/blob/master/examples/snake.rs
 use std::collections::LinkedList;
+use serde::{Serialize, Deserialize};
 use rand::Rng;
+type Coord = (i32,i32);
 
-use crate::digs::Digs;
-type coord = (i32,i32);
-
-#[derive(PartialEq)]
+#[derive(PartialEq, Serialize, Deserialize)]
 pub enum Dir {
     Up,
     Down,
     Left,
     Right
 }
+
+#[derive(Serialize, Deserialize)]
 pub struct Snake {
-    pub head: coord,
-    pub body: LinkedList<coord>,
+    pub head: Coord,
+    pub body: LinkedList<Coord>,
     pub dir: Dir,
 }
 impl Snake {

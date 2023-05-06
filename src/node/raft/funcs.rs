@@ -679,6 +679,7 @@ impl Node {
         }
     }
 
+    #[tokio::main]
     pub async fn start(&mut self) {
         // Sets up connection to all peer nodes (panic if it can't find the connection - fix later :D)
         let mut connections = HashMap::new();
