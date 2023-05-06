@@ -1,6 +1,10 @@
 use digs::node::{raft, rpc};
 use local_ip_address::local_ip;
-use std::{env, io::{self, Read}, net::SocketAddr};
+use std::{
+    env,
+    io::{self, Read},
+    net::SocketAddr,
+};
 use tokio::sync::mpsc;
 
 #[tokio::main]

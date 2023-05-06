@@ -103,7 +103,7 @@ impl Node {
             .iter()
             .enumerate()
             .filter({
-                |(index, l)| l.term > *from_term && *index > (*from_idx).try_into().unwrap()
+                |(index, l)| l.term > *from_term && *index > usize::try_from(*from_idx).unwrap()
             })
             .into_iter()
             .map(|(_index, l)| l.clone())
