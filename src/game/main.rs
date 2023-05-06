@@ -5,6 +5,7 @@ use digs::digs::Digs;
 use digs::game::{Snake, Dir};
 
 const SQUARES: i32 = 50;
+
 #[macroquad::main("Snake")]
 async fn main() {
     // gui/cli startup code
@@ -14,12 +15,10 @@ async fn main() {
     let port = &args[1];
     let dir_ip = &args[2];
     let mut endgame = false;
-    let mut digs = Digs::new(&port, &dir_ip); // GUI code could go in here maybe?
     let mut snake = Snake::new();
     let mut t = get_time();
     // this might be important for fixing start times
-    digs.register_node();
-    digs.start().await;
+    let digs = start_digs(port, dir_ip);
     loop {
         if !endgame {
             change_direction(&mut snake);
@@ -33,6 +32,14 @@ async fn main() {
         draw_snake(&mut snake);
         next_frame().await;
     }
+}
+
+#[tokio::main]
+async fn start_digs(port: &str, dir_ip: &str) -> Digs {
+    let mut digs = Digs::new(&port, &dir_ip); // GUI code could go in here maybe?
+    digs.register_node();
+    digs.start().await;
+    return digs;
 }
 
 fn check_collision(s: &mut Snake) -> bool {

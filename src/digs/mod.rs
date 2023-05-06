@@ -19,8 +19,7 @@ pub struct Digs {
 /// if starting from existing server, join server through directory
 /// May want a GUI/CLI which asks user whether they would like to start new server or join existing
 impl Digs {
-    #[tokio::main]
-    pub async fn new(port: &str, dir_ip: &str) -> Self {
+    pub fn new(port: &str, dir_ip: &str) -> Self {
         let (id, socket) = util::makeSocket(port.to_string());
         let c = Client::new();
         // could try to combine rpc handler into node
