@@ -33,7 +33,7 @@ async fn main() {
         Ok(a) => a,
     };
 
-    let url = format!("http://localhost:8000/add-peer?ip={ip}", ip=server_addr);
+    let url = format!("http://localhost:8000/add-peer/{ip}", ip=server_addr);
     reqwest::blocking::get(&url);
 
     // RPC handler can forward RPCs to node via this channel
