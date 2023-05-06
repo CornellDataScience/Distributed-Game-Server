@@ -9,7 +9,7 @@ use crate::{
 use tokio::sync::{mpsc};
 
 pub struct Digs {
-    id: String,
+    pub id: String,
     dir_ip: String,
     client: Client,
     server: Node,
@@ -70,7 +70,7 @@ impl Digs {
 
     // TODO: tokio::spawn client vs server in different threads?
     // TODO: should there be a function that should be called to cleanup when server and such is shut down?
-    pub async fn start(mut self) {
+    pub async fn start(&mut self) {
         println!("starting digs...");
         println!("connecting to directory...");
         let mut res = reqwest::blocking::get(&format!("{}get-peers/", self.dir_ip))

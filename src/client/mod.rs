@@ -45,7 +45,7 @@ impl Client {
                 let n = rand::thread_rng().gen_range(0..self.peers.len());
                 self.peers[n].clone()
             }
-            Some(l) => String::from("http://") + l,
+            Some(l) => l.to_string(),
         };
         self.current_leader = Some(dst_ip.to_string());
         self.connections.get(dst_ip).unwrap().clone()

@@ -1,6 +1,7 @@
 
 use macroquad::prelude::*;
 use std::env;
+use std::io::Read;
 use digs::digs::Digs;
 use digs::game::{Snake, Dir};
 
@@ -18,7 +19,14 @@ async fn main() {
     let mut snake = Snake::new();
     let mut t = get_time();
     // this might be important for fixing start times
-    let digs = start_digs(port, dir_ip);
+    let mut digs = start_digs(port, dir_ip);
+    loop {
+        let mut res = reqwest::blocking::get(&format!("{}{}{}", dir_ip, "get-peers/",digs.id))
+            .expect("Could not connect to directory server");
+        let mut body = String::new();
+        res.read_to_string(&mut body).unwrap();
+        println!("{:?}", body);
+    }
     loop {
         if !endgame {
             change_direction(&mut snake);
@@ -26,6 +34,7 @@ async fn main() {
                 t = get_time();
                 move_snake(&mut snake);
                 let serialized = serde_json::to_string(&snake).unwrap();
+                digs.put(serialized).await;
                 endgame = check_collision(&mut snake);
             }   
         } 
