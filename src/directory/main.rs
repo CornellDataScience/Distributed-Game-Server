@@ -32,15 +32,15 @@ fn get_peers(peers_state: &State<PeersStatePointer>) -> String {
     serde_json::to_string(&peers).unwrap()
 }
 
-#[get("/get-peers/<ip>")]
-fn get_peers_add_ip(ip: &str, peers_state: &State<PeersStatePointer>) -> String {
+#[get("/add-peer?<ip>")]
+fn add_peer(ip: &str, peers_state: &State<PeersStatePointer>) -> String {
     let mut peers_state = peers_state.lock().unwrap();
     let peers = &mut peers_state.peers;
     peers.insert(String::from(ip));
     serde_json::to_string(&peers).unwrap()
 }
 
-#[get("/kick-peer/<ip>")]
+#[get("/kick-peer?<ip>")]
 fn kick_peer(ip: &str, peers_state: &State<PeersStatePointer>) -> String {
     let mut peers_state = peers_state.lock().unwrap();
     let peers = &mut peers_state.peers;
@@ -51,6 +51,6 @@ fn kick_peer(ip: &str, peers_state: &State<PeersStatePointer>) -> String {
 #[launch]
 fn rocket() -> _ {
     rocket::build()
-        .mount("/", routes![get_peers, kick_peer, get_peers_add_ip])
+        .mount("/", routes![get_peers, kick_peer, add_peer])
         .manage(PeersState::new())
 }
