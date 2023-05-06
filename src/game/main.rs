@@ -1,5 +1,6 @@
 
 use macroquad::prelude::*;
+use std::collections::HashSet;
 use std::env;
 use std::io::Read;
 use digs::digs::Digs;
@@ -21,11 +22,14 @@ async fn main() {
     // this might be important for fixing start times
     let mut digs = start_digs(port, dir_ip);
     loop {
-        let mut res = reqwest::blocking::get(&format!("{}{}{}", dir_ip, "get-peers/",digs.id))
+        let mut res = reqwest::blocking::get(&format!("{}{}", dir_ip, "get-peers/"))
             .expect("Could not connect to directory server");
         let mut body = String::new();
         res.read_to_string(&mut body).unwrap();
-        println!("{:?}", body);
+        let peers_list : HashSet<String> = serde_json::from_str(&body).unwrap();
+        if peers_list.len() >= 3 {
+            break;
+        }
     }
     loop {
         if !endgame {

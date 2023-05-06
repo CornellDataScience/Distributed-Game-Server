@@ -32,7 +32,7 @@ fn get_peers(peers_state: &State<PeersStatePointer>) -> String {
     serde_json::to_string(&peers).unwrap()
 }
 
-#[get("/add-peer?<ip>")]
+#[get("/add-peer/<ip>")]
 fn add_peer(ip: &str, peers_state: &State<PeersStatePointer>) -> String {
     let mut peers_state = peers_state.lock().unwrap();
     let peers = &mut peers_state.peers;
