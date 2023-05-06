@@ -15,10 +15,8 @@ async fn main() {
     
     c.put(key1.clone(), 1).await;
     c.put(key2.clone(), 2).await;
-    // tokio::join!(
-    //     c.get(key1.clone()),
-    //     c.get(key2.clone()),
-    // );
-    println!("{:?}", c.get(key1.clone()).await);
-    println!("{:?}", c.get(key2.clone()).await);
+    let x = c.get(key1.clone()).await;
+    let y = c.get(key2.clone()).await;
+    println!("{:?}", x);
+    println!("{:?}", y);
 }

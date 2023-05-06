@@ -64,7 +64,7 @@ impl Node {
             next_timeout: None,
             config: ServerConfig {
                 timeout: Duration::new(2, 0),
-                batch_size: 5,
+                batch_size: 2,
                 batch_timeout: Duration::new(10, 0),
             },
             batched_put_requests: Vec::new(),
@@ -800,6 +800,7 @@ impl Node {
         req: PutRequest,
         tx: oneshot::Sender<Result<Response<PutResponse>, Status>>,
     ) {
+        println!("PUTTING");
         if self.state != State::Leader {
             tx.send(Ok(Response::new(PutResponse {
                 success: false,
@@ -810,7 +811,7 @@ impl Node {
         }
         self.batched_put_requests.push(req);
         self.batched_put_senders.push(tx);
-        println!("{:?}", self.batched_put_requests);
+        println!("Put it {:?}", self.batched_put_requests);
 
     }
 

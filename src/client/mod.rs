@@ -51,7 +51,7 @@ impl Client {
     pub async fn get(&mut self, key: String) -> i64 {
         let mut dst = self.find_leader();
         let req = GetRequest { key: key.clone() };
-        match block_on(dst.get(req)) {
+        match dst.get(req).await {
             Ok(res) => {
                 let r = res.into_inner();
                 self.current_leader = r.leader_id;
@@ -78,7 +78,7 @@ impl Client {
             value: value,
             serial_number: 0,
         };
-        match block_on(dst.put(req)) {
+        match dst.put(req).await {
             Ok(res) => {
                 let r = res.into_inner();
                 self.current_leader = r.leader_id;
