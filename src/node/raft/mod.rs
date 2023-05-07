@@ -60,7 +60,7 @@ pub struct Node {
     commit_index: u64,
     last_applied: u64,
     peers: Vec<String>,
-    state_machine: HashMap<String, json::JsonValue>,
+    state_machine: HashMap<String, String>,
 
     // persistent state
     current_term: u64,
