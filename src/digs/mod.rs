@@ -78,11 +78,11 @@ impl Digs {
         let mut body = String::new();
         res.read_to_string(&mut body).unwrap();
         let peers: Vec<String> = serde_json::from_str::<Vec<String>>(&body)
-            .expect("Could not parse JSON response")
-            .into_iter()
-            .filter(|addr| !addr.is_empty())
-            .map(|addr| String::from("http://") + &addr)
-            .collect();
+        .expect("Could not parse JSON response")
+        .into_iter()
+        .filter(|addr| !addr.is_empty() && addr != &self.id)
+        .map(|addr| String::from("http://") + &String::from(addr))
+        .collect();
         println!("starting local server...");
         self.server.set_peers(peers.clone());
         self.client.set_peers(peers);
