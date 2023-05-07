@@ -7,7 +7,6 @@ use tonic::transport::Channel;
 
 use self::raft_rpc::{raft_rpc_client::RaftRpcClient, GetRequest, PutRequest};
 
-use async_recursion::async_recursion;
 
 pub mod raft_rpc {
     tonic::include_proto!("raftrpc");
@@ -61,7 +60,7 @@ impl Client {
                 let r = res.into_inner();
                 self.current_leader = r.leader_id;
                 if r.success {
-                    println!("{:?}", r.value);
+                    // println!("{:?}", r.value);
                     return r.value;
                 } else {
                     // TODO: FIX

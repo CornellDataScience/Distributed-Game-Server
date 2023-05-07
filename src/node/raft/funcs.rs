@@ -5,7 +5,6 @@ use std::{
 };
 
 use futures::{executor::block_on, future::select_all};
-use json::JsonValue;
 use rand::Rng;
 use tokio::sync::{mpsc, oneshot};
 use tonic::{Request, Response, Status};

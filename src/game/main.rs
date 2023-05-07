@@ -38,12 +38,21 @@ async fn main() {
         let mut body = String::new();
         res.read_to_string(&mut body).unwrap();
         let games_list : HashSet<String> = serde_json::from_str(&body).unwrap();
-        if games_list.len() >= 1 {
+        if games_list.len() >= 2 {
             break;
         }
     }
+
+    let mut res = reqwest::blocking::get(&format!("{}{}", dir_ip, "get-games/"))
+            .expect("Could not connect to directory server");
+    let mut body = String::new();
+    res.read_to_string(&mut body).unwrap();
+    let mut games_list : HashSet<String> = serde_json::from_str(&body).unwrap();
+    games_list.remove(game_id);
+    // println!("{:?}", games_list);
     // this might be important for fixing start times
     loop {
+        let mut enemies: Vec<Snake> = vec![];
         if !endgame {
             change_direction(&mut snake);
             if get_time() - t > 0.1 {
@@ -52,13 +61,16 @@ async fn main() {
                 let serialized = serde_json::to_string(&snake).unwrap();
                 put_data(peers.clone(), game_id.to_string(),serialized);
                 endgame = check_collision(&mut snake);
-                let data = get_data(peers.clone(), game_id.to_string());
-                if data != "0" {
-                    println!("{:?}", data);
+                for g_id in games_list.iter() {
+                    let data = get_data(peers.clone(), g_id.to_string());
+                    if data != "0" {
+                        let e_snake : Snake = serde_json::from_str(&data).unwrap();
+                        enemies.push(e_snake);
+                    }
                 }
             }   
         } 
-        draw_snake(&mut snake);
+        draw_snake(&mut snake, &mut enemies);
         next_frame().await;
     }
 }
@@ -86,7 +98,7 @@ fn check_collision(s: &mut Snake) -> bool {
     return check1 || check2;
 }
 
-fn draw_snake(s: &mut Snake) {
+fn draw_snake(s: &mut Snake, enemies: &mut Vec<Snake>) {
     clear_background(BLACK);
     let game_size = screen_width().min(screen_height());
     let offset_x = (screen_width() - game_size) / 2. + 10.;
@@ -118,7 +130,7 @@ fn draw_snake(s: &mut Snake) {
         offset_y + s.head.1 as f32 * sq_size,
         sq_size,
         sq_size,
-        DARKGREEN,
+        LIME,
     );
     for (x, y) in &s.body {
         draw_rectangle(
@@ -128,6 +140,25 @@ fn draw_snake(s: &mut Snake) {
             sq_size,
             LIME,
         );
+    }
+
+    for e_snake in enemies.iter() {
+        draw_rectangle(
+            offset_x + e_snake.head.0 as f32 * sq_size,
+            offset_y + e_snake.head.1 as f32 * sq_size,
+            sq_size,
+            sq_size,
+            RED,
+        );
+        for (x, y) in &e_snake.body {
+            draw_rectangle(
+                offset_x + *x as f32 * sq_size,
+                offset_y + *y as f32 * sq_size,
+                sq_size,
+                sq_size,
+                RED,
+            );
+        }
     }
 }
 
