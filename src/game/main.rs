@@ -30,7 +30,6 @@ async fn main() {
         .filter(|addr| !addr.is_empty())
         .map(|addr| String::from("http://") + &addr)
         .collect();
-    let mut c = start_client(peers);
     let url = format!("http://localhost:8000/add-game/{id}", id=game_id);
     reqwest::blocking::get(&url);
     loop {
@@ -39,7 +38,7 @@ async fn main() {
         let mut body = String::new();
         res.read_to_string(&mut body).unwrap();
         let games_list : HashSet<String> = serde_json::from_str(&body).unwrap();
-        if games_list.len() >= 3 {
+        if games_list.len() >= 1 {
             break;
         }
     }
@@ -51,10 +50,12 @@ async fn main() {
                 t = get_time();
                 move_snake(&mut snake);
                 let serialized = serde_json::to_string(&snake).unwrap();
-                c.put(game_id.to_string(),serialized).await;
+                put_data(peers.clone(), game_id.to_string(),serialized);
                 endgame = check_collision(&mut snake);
-                let s = c.get(game_id.to_string()).await;
-                println!("{}",s);
+                let data = get_data(peers.clone(), game_id.to_string());
+                if data != "0" {
+                    println!("{:?}", data);
+                }
             }   
         } 
         draw_snake(&mut snake);
@@ -63,9 +64,15 @@ async fn main() {
 }
 
 #[tokio::main]
-async fn start_client(peers : Vec<String>) -> Client {
-    let c = Client::new(peers);
-    return c;
+async fn put_data(peers : Vec<String>, game_id: String, serialized: String) {
+    let mut c = Client::new(peers);
+    c.put(game_id.to_string(),serialized);
+}
+
+#[tokio::main]
+async fn get_data(peers : Vec<String>, game_id: String) -> String {
+    let mut c = Client::new(peers);
+    c.get(game_id.to_string())
 }
 
 fn check_collision(s: &mut Snake) -> bool {

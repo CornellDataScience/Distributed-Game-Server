@@ -13,7 +13,7 @@ pub mod raft_rpc {
     tonic::include_proto!("raftrpc");
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Client {
     peers: Vec<String>,
     connections: HashMap<String, RaftRpcClient<Channel>>,
@@ -37,28 +37,31 @@ impl Client {
     /// If current leader unknown, finds the leader of the server by sending a
     /// message to a random server in the cluster
     fn find_leader(&mut self) -> RaftRpcClient<Channel> {
-        println!("finding leader");
+        // println!("finding leader");
         let dst_ip = &match &self.current_leader {
             None => {
                 let n = rand::thread_rng().gen_range(0..self.peers.len());
                 self.peers[n].clone()
             }
-            Some(l) => l.to_string(),
+            Some(l) => "http://".to_string() + l,
         };
         self.current_leader = Some(dst_ip.to_string());
         self.connections.get(dst_ip).unwrap().clone()
     }
 
     /// Gets the value of a key from the leader
-    pub async fn get(&mut self, key: String) -> String {
-        let mut dst = self.find_leader();
+    pub fn get(&mut self, key: String) -> String {
+        let dst = self.find_leader();
+        // println!("getting {:?}", self.current_leader);
+
         let req = GetRequest { key: key.clone() };
-        match dst.get(req).await {
+        match block_on(dst.clone().get(req)) {
             Ok(res) => {
-                println!("{:?}",res);
+                // println!("{:?}",res);
                 let r = res.into_inner();
                 self.current_leader = r.leader_id;
                 if r.success {
+                    println!("{:?}", r.value);
                     return r.value;
                 } else {
                     // TODO: FIX
@@ -74,22 +77,23 @@ impl Client {
     }
 
     /// Pushes a key value pair to the leader
-    #[async_recursion]
-    pub async fn put(&mut self, key: String, value: String) -> Result<(), String> {
+    pub fn put(&mut self, key: String, value: String) -> Result<(), String> {
         let mut dst = self.find_leader();
-        println!("putting {:?}", self.current_leader);
+        // println!("putting {:?}", self.current_leader);
 
         let req = PutRequest {
+            key: key.clone(),
             data: value.to_string(),
             serial_number: 0,
         };
-        match dst.put(req).await {
+        match block_on(dst.put(req)) {
             Ok(res) => {
+                // println!("{:?}", res);
                 let r = res.into_inner();
                 self.current_leader = r.leader_id;
                 // try finding the leader again if put unsuccessful
                 if !r.success {
-                    return self.put(key, value).await;
+                    return self.put(key, value);
                 }
                 return Ok(())
             }
