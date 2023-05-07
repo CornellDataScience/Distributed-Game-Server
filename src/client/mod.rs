@@ -1,3 +1,4 @@
+
 use std::collections::HashMap;
 
 use futures::executor::block_on;
@@ -6,10 +7,13 @@ use tonic::transport::Channel;
 
 use self::raft_rpc::{raft_rpc_client::RaftRpcClient, GetRequest, PutRequest};
 
+use async_recursion::async_recursion;
+
 pub mod raft_rpc {
     tonic::include_proto!("raftrpc");
 }
 
+#[derive(Debug)]
 pub struct Client {
     peers: Vec<String>,
     connections: HashMap<String, RaftRpcClient<Channel>>,
@@ -18,24 +22,18 @@ pub struct Client {
 
 impl Client {
     /// Creates a new client from a vector of server nodes
-    pub fn new() -> Self {
+    pub fn new(peers: Vec<String>) -> Self {
+        let mut connections = HashMap::new();
+        peers.clone().into_iter().for_each(|ip| {
+            let future = block_on(RaftRpcClient::connect(ip.clone()));
+            connections.insert(ip.clone(), future.unwrap());
+        });
         return Client {
-            peers: Vec::new(),
-            connections: HashMap::new(),
+            peers: peers,
+            connections: connections,
             current_leader: None,
         };
     }
-    pub fn set_peers(&mut self, peers: Vec<String>) {
-        self.peers = peers;
-    }
-    /// creates a connection to each peer
-    pub fn start(&mut self) {
-        self.peers.clone().into_iter().for_each(|ip| {
-            let future = block_on(RaftRpcClient::connect(ip.clone()));
-            self.connections.insert(ip.clone(), future.unwrap());
-        });
-    }
-
     /// If current leader unknown, finds the leader of the server by sending a
     /// message to a random server in the cluster
     fn find_leader(&mut self) -> RaftRpcClient<Channel> {
@@ -52,43 +50,48 @@ impl Client {
     }
 
     /// Gets the value of a key from the leader
-    pub fn get(&mut self, key: String) -> String {
+    pub async fn get(&mut self, key: String) -> String {
         let mut dst = self.find_leader();
         let req = GetRequest { key: key.clone() };
-        match block_on(dst.get(req)) {
+        match dst.get(req).await {
             Ok(res) => {
+                println!("{:?}",res);
                 let r = res.into_inner();
                 self.current_leader = r.leader_id;
                 if r.success {
                     return r.value;
                 } else {
-                    // TODO: FIX FAILURE CASES
-                    return json::stringify(0);
+                    // TODO: FIX
+                    return 0.to_string();
                 }
             }
-            _ => return json::stringify(0),
+            _ => {
+                println!("uhoh");
+                return 0.to_string();
+            }
         }
         // self.get(key)
     }
 
     /// Pushes a key value pair to the leader
-    pub fn put(&mut self, data: &String) -> Result<(), String> {
+    #[async_recursion]
+    pub async fn put(&mut self, key: String, value: String) -> Result<(), String> {
         let mut dst = self.find_leader();
         println!("putting {:?}", self.current_leader);
 
         let req = PutRequest {
-            data: data.to_string(),
+            data: value.to_string(),
             serial_number: 0,
         };
-        match block_on(dst.put(req)) {
+        match dst.put(req).await {
             Ok(res) => {
                 let r = res.into_inner();
                 self.current_leader = r.leader_id;
                 // try finding the leader again if put unsuccessful
                 if !r.success {
-                    return self.put(data);
+                    return self.put(key, value).await;
                 }
-                return Ok(());
+                return Ok(())
             }
             // Expected Ok, but failed for some reason
             _ => return Err("Put request was not Ok for some reason".to_string()),

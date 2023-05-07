@@ -43,7 +43,7 @@ fn get_game_ids(game_ids_state: &State<GameIdsStatePointer>) -> String {
     serde_json::to_string(&game_ids).unwrap()
 }
 
-#[get("/add-game?<id>")]
+#[get("/add-game/<id>")]
 fn add_game_id(id: &str, game_ids_state: &State<GameIdsStatePointer>) -> String {
     let mut game_ids_state = game_ids_state.lock().unwrap();
     let game_ids = &mut game_ids_state.game_ids;

@@ -1,5 +1,6 @@
 
 use macroquad::prelude::*;
+use std::collections::HashSet;
 use std::io::Read;
 use std::env;
 use digs::client::Client;
@@ -10,15 +11,16 @@ const SQUARES: i32 = 50;
 #[macroquad::main("Snake")]
 async fn main() {
     // gui/cli startup code
-    // cargo r --bin game game_id
+    // cargo r --bin game game_id http://localhost:8000/
     // directory hosted at http://localhost:8000/
     let args: Vec<String> = env::args().collect();
     let game_id = &args[1];
+    let dir_ip = &args[2];
     let mut endgame = false;
     let mut snake = Snake::new();
     let mut t = get_time();
-    let mut c = Client::new();
-    let mut res = reqwest::blocking::get("http://localhost:8000/get-peers")
+
+    let mut res = reqwest::blocking::get(&format!("{}{}", dir_ip, "get-peers/"))
         .expect("Could not connect to directory server");
     let mut body = String::new();
     res.read_to_string(&mut body).unwrap();
@@ -28,7 +30,19 @@ async fn main() {
         .filter(|addr| !addr.is_empty())
         .map(|addr| String::from("http://") + &addr)
         .collect();
-    c.set_peers(peers);
+    let mut c = start_client(peers);
+    let url = format!("http://localhost:8000/add-game/{id}", id=game_id);
+    reqwest::blocking::get(&url);
+    loop {
+        let mut res = reqwest::blocking::get(&format!("{}{}", dir_ip, "get-games/"))
+            .expect("Could not connect to directory server");
+        let mut body = String::new();
+        res.read_to_string(&mut body).unwrap();
+        let games_list : HashSet<String> = serde_json::from_str(&body).unwrap();
+        if games_list.len() >= 3 {
+            break;
+        }
+    }
     // this might be important for fixing start times
     loop {
         if !endgame {
@@ -37,13 +51,21 @@ async fn main() {
                 t = get_time();
                 move_snake(&mut snake);
                 let serialized = serde_json::to_string(&snake).unwrap();
-                c.put(&serialized);
+                c.put(game_id.to_string(),serialized).await;
                 endgame = check_collision(&mut snake);
+                let s = c.get(game_id.to_string()).await;
+                println!("{}",s);
             }   
         } 
         draw_snake(&mut snake);
         next_frame().await;
     }
+}
+
+#[tokio::main]
+async fn start_client(peers : Vec<String>) -> Client {
+    let c = Client::new(peers);
+    return c;
 }
 
 fn check_collision(s: &mut Snake) -> bool {
