@@ -1,0 +1,5 @@
+25x25 board
+10 length snake
+everyminute snake grow big
+
+adapted from https://github.com/tobiasctrl/Snake

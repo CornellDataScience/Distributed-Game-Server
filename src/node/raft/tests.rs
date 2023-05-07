@@ -4,7 +4,9 @@ use super::*;
 
 fn new_node() -> Node {
     let (_, rx) = mpsc::unbounded_channel();
-    return Node::new(String::from("abc"), vec![], rx);
+    let mut n = Node::new(String::from("abc"), rx);
+    n.set_peers(vec![]);
+    n
 }
 
 fn test_request_vote(receiver: &mut Node, req: VoteRequest, expected: VoteResponse) {

@@ -5,7 +5,6 @@ use std::{
 };
 
 use futures::{executor::block_on, future::select_all};
-use json::JsonValue;
 use rand::Rng;
 use tokio::sync::{mpsc, oneshot};
 use tonic::{Request, Response, Status};
@@ -41,13 +40,13 @@ impl Node {
     ///        in AE, prev_log_index will be None if leader had never sent an AE to the follower
     /// * `match_index` - The highest index log entry where a follower is consistent with the leader
 
-    pub fn new(id: String, peers: Vec<String>, mailbox: mpsc::UnboundedReceiver<Event>) -> Self {
+    pub fn new(id: String, mailbox: mpsc::UnboundedReceiver<Event>) -> Self {
         Self {
             id: id,
             state: State::Follower,
             commit_index: 0,
             last_applied: 0,
-            peers: peers,
+            peers: vec![],
             state_machine: HashMap::new(),
             current_term: 1,
             voted_for: None,
@@ -78,6 +77,10 @@ impl Node {
         }
     }
 
+    pub fn set_peers(&mut self, peers: Vec<String>) {
+        self.peers = peers;
+    }
+
     // ------------------------------- HELPERS --------------------------------
 
     pub fn refresh_timeout(self: &mut Self) {
@@ -99,7 +102,7 @@ impl Node {
             .iter()
             .enumerate()
             .filter({
-                |(index, l)| l.term > *from_term && *index > (*from_idx).try_into().unwrap()
+                |(index, l)| l.term > *from_term && *index > usize::try_from(*from_idx).unwrap()
             })
             .into_iter()
             .map(|(_index, l)| l.clone())
@@ -199,7 +202,7 @@ impl Node {
                                     value: (*self
                                         .state_machine
                                         .get(&req.key)
-                                        .unwrap_or(&json::JsonValue::Null))
+                                        .unwrap_or(&"null".to_string()))
                                     .to_string(),
                                     success: true,
                                     leader_id: Some(self.id.clone()),
@@ -250,16 +253,17 @@ impl Node {
             return;
         }
         let command = Command { data: req.data };
-        tx.send(self.replicate(&vec![command]).await)
+        tx.send(self.replicate(&vec![command], req.key).await)
             .unwrap_or_else(|_| ());
     }
 
     /// parses jsonstr into the state machine
-    fn add_json_entries(&mut self, jstr: &String) {
-        let parsed = json::parse(jstr).unwrap();
-        for (k, v) in parsed.entries() {
-            self.state_machine.insert(k.to_string(), v.clone());
-        }
+    fn add_json_entries(&mut self, jstr: &String, key : String) {
+        // let parsed = json::parse(jstr).unwrap();
+        // for (k, v) in parsed.entries() {
+        //     self.state_machine.insert(k.to_string(), v.clone());
+        // }
+        self.state_machine.insert(key, jstr.to_string());
     }
 
     // --------------------------- APPEND ENTRIES -----------------------------
@@ -471,7 +475,7 @@ impl Node {
             println!("ae update commit and apply log entries");
             for i in self.commit_index + 1..req.leader_commit + 1 {
                 let c = self.log[i as usize].command.clone();
-                self.add_json_entries(&c.as_ref().unwrap().data);
+                self.add_json_entries(&c.as_ref().unwrap().data, "hopefully this doesn't hit".to_string());
             }
             self.commit_index = cmp::min(req.leader_commit, (self.log.len() - 1) as u64);
         }
@@ -717,6 +721,7 @@ impl Node {
     async fn replicate(
         &mut self,
         commands: &Vec<Command>,
+        key: String
     ) -> Result<Response<PutResponse>, Status> {
         // If command received from client: append entry to local log,
         // respond after entry applied to state machine (§5.3)
@@ -743,7 +748,7 @@ impl Node {
         }
         // apply new log entries to state machine
         for command in commands {
-            self.add_json_entries(&command.data);
+            self.add_json_entries(&command.data, key.clone());
         }
 
         Ok(Response::new(PutResponse {
@@ -757,37 +762,37 @@ impl Node {
     ////////////////////////////////////////////////////////////////////////////
 
     /// Send out batch when time is up or batch is filled
-    async fn start_batched_put(&mut self) {
-        self.batch_put_timeout = Some(Instant::now());
-        loop {
-            let timeout = match self.batch_put_timeout {
-                Some(t) => t.elapsed() >= self.config.batch_timeout,
-                None => false,
-            };
-            if self.batched_put_requests.len() > self.config.batch_size || timeout {
-                let mut log = vec![];
-                for req in &self.batched_put_requests {
-                    let command = Command {
-                        data: req.data.clone(),
-                    };
-                    log.push(command)
-                }
+    // async fn start_batched_put(&mut self) {
+    //     self.batch_put_timeout = Some(Instant::now());
+    //     loop {
+    //         let timeout = match self.batch_put_timeout {
+    //             Some(t) => t.elapsed() >= self.config.batch_timeout,
+    //             None => false,
+    //         };
+    //         if self.batched_put_requests.len() > self.config.batch_size || timeout {
+    //             let mut log = vec![];
+    //             for req in &self.batched_put_requests {
+    //                 let command = Command {
+    //                     data: req.data.clone(),
+    //                 };
+    //                 log.push(command)
+    //             }
 
-                while !self.batched_put_senders.is_empty() {
-                    let result: Result<Response<PutResponse>, Status> = self.replicate(&log).await;
-                    match self.batched_put_senders.pop() {
-                        Some(tx) => tx.send(result).unwrap_or_else(|_| ()),
-                        None => (),
-                    }
-                }
+    //             while !self.batched_put_senders.is_empty() {
+    //                 let result: Result<Response<PutResponse>, Status> = self.replicate(&log).await;
+    //                 match self.batched_put_senders.pop() {
+    //                     Some(tx) => tx.send(result).unwrap_or_else(|_| ()),
+    //                     None => (),
+    //                 }
+    //             }
 
-                self.batched_put_requests = Vec::<PutRequest>::new();
-                self.batched_put_senders =
-                    Vec::<oneshot::Sender<Result<Response<PutResponse>, Status>>>::new();
-                self.batch_put_timeout = Some(Instant::now());
-            }
-        }
-    }
+    //             self.batched_put_requests = Vec::<PutRequest>::new();
+    //             self.batched_put_senders =
+    //                 Vec::<oneshot::Sender<Result<Response<PutResponse>, Status>>>::new();
+    //             self.batch_put_timeout = Some(Instant::now());
+    //         }
+    //     }
+    // }
 
     /// Add put requests to batch
     async fn handle_batched_put_request(

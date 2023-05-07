@@ -1,6 +1,10 @@
 use digs::node::{raft, rpc};
 use local_ip_address::local_ip;
-use std::{env, io::{self, Read}, net::SocketAddr};
+use std::{
+    env,
+    io::{self, Read},
+    net::SocketAddr,
+};
 use tokio::sync::mpsc;
 
 #[tokio::main]
@@ -29,21 +33,8 @@ async fn main() {
         Ok(a) => a,
     };
 
-    // read from peers.txt to get the ip addresses of the other server nodes, ignoring its own address
-    let mut res = reqwest::blocking::get("http://localhost:8000/get-peers")
-        .expect("Could not connect to directory server");
-    let mut body = String::new();
-    res.read_to_string(&mut body).unwrap();
-    let peers: Vec<String> = serde_json::from_str::<Vec<String>>(&body)
-        .expect("Could not parse JSON response")
-        .into_iter()
-        .filter(|addr| !addr.is_empty() && addr != &server_addr)
-        .map(|addr| String::from("http://") + &String::from(addr))
-        .collect();
-    if peers.len() == 0 {
-        println!("peers.txt must have at least one peer");
-        return;
-    }
+    let url = format!("http://localhost:8000/add-peer/{ip}", ip=server_addr);
+    reqwest::blocking::get(&url);
 
     // RPC handler can forward RPCs to node via this channel
     let (tx, rx) = mpsc::unbounded_channel();
@@ -65,6 +56,22 @@ async fn main() {
             _ => continue,
         };
     }
-    let mut node = raft::Node::new(server_addr, peers, rx);
+    // read from peers.txt to get the ip addresses of the other server nodes, ignoring its own address
+    let mut res = reqwest::blocking::get("http://localhost:8000/get-peers")
+        .expect("Could not connect to directory server");
+    let mut body = String::new();
+    res.read_to_string(&mut body).unwrap();
+    let peers: Vec<String> = serde_json::from_str::<Vec<String>>(&body)
+        .expect("Could not parse JSON response")
+        .into_iter()
+        .filter(|addr| !addr.is_empty() && addr != &server_addr)
+        .map(|addr| String::from("http://") + &String::from(addr))
+        .collect();
+    if peers.len() == 0 {
+        println!("peers.txt must have at least one peer");
+        return;
+    }
+    let mut node = raft::Node::new(server_addr, rx);
+    node.set_peers(peers);
     node.start().await;
 }

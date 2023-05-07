@@ -24,8 +24,9 @@ async fn main() {
         .filter(|addr| !addr.is_empty())
         .map(|addr| String::from("http://") + &addr)
         .collect();
-    let mut c = Client::new(peers);
-    let key = String::from("key");
-    c.put(&r#"{ "key" : 1 }"#.to_string());
-    println!("{}", c.get(key.clone()));
+    // let mut c = Client::new();
+    // c.set_peers(peers);
+    // let key = String::from("key");
+    // c.put(&r#"{ "key" : 1 }"#.to_string());
+    // println!("{}", c.get(key.clone()));
 }
