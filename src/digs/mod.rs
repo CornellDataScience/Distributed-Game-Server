@@ -11,7 +11,6 @@ use tokio::sync::{mpsc};
 pub struct Digs {
     pub id: String,
     dir_ip: String,
-    client: Client,
     server: Node,
 }
 /// use case
@@ -21,7 +20,6 @@ pub struct Digs {
 impl Digs {
     pub fn new(port: &str, dir_ip: &str) -> Self {
         let (id, socket) = util::makeSocket(port.to_string());
-        let c = Client::new();
         // could try to combine rpc handler into node
         let (tx, rx) = mpsc::unbounded_channel();
         let n = Node::new(id.clone(), rx);
@@ -31,7 +29,6 @@ impl Digs {
         Self {
             id: id,
             dir_ip: dir_ip.to_string(),
-            client: c,
             server: n,
         }
     }
@@ -85,22 +82,22 @@ impl Digs {
         .collect();
         println!("starting local server...");
         self.server.set_peers(peers.clone());
-        self.client.set_peers(peers);
+        // self.client.set_peers(peers);
         // may want to start raft server and client on different threads using the tokio scheduler
         // i think this will also resolve issues that may arise with start() being async
         // but how to implement Send?
         // main thread is the game which makes get/put reqs
         println!("client connecting to servers...");
-        self.client.start();
+        // self.client.start();
         self.server.start().await;
         println!("digs started!");
     }
 
-    pub async fn get(&mut self, key: String) {
-        self.client.get(key);
-    }
+    // pub async fn get(&mut self, key: String) {
+    //     self.client.get(key);
+    // }
 
-    pub async fn put(&mut self, data: String) {
-        self.client.put(&data);
-    }
+    // pub async fn put(&mut self, data: String) {
+    //     self.client.put(&data);
+    // }
 }

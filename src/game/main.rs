@@ -1,40 +1,35 @@
 
 use macroquad::prelude::*;
-use std::collections::HashSet;
-use std::{env, thread, time};
 use std::io::Read;
-use digs::digs::Digs;
+use std::env;
+use digs::client::Client;
 use digs::game::{Snake, Dir};
-use local_ip_address::local_ip;
 
 const SQUARES: i32 = 50;
 
 #[macroquad::main("Snake")]
 async fn main() {
     // gui/cli startup code
-    // cargo r --bin game port dir_ip
+    // cargo r --bin game game_id
     // directory hosted at http://localhost:8000/
     let args: Vec<String> = env::args().collect();
-    let port = &args[1];
-    let dir_ip = &args[2];
+    let game_id = &args[1];
     let mut endgame = false;
     let mut snake = Snake::new();
     let mut t = get_time();
+    let mut c = Client::new();
+    let mut res = reqwest::blocking::get("http://localhost:8000/get-peers")
+        .expect("Could not connect to directory server");
+    let mut body = String::new();
+    res.read_to_string(&mut body).unwrap();
+    let peers: Vec<String> = serde_json::from_str::<Vec<String>>(&body)
+        .expect("Could not parse JSON response")
+        .into_iter()
+        .filter(|addr| !addr.is_empty())
+        .map(|addr| String::from("http://") + &addr)
+        .collect();
+    c.set_peers(peers);
     // this might be important for fixing start times
-    let server_addr = format!("{}:{}", local_ip().unwrap().to_string(), &port);
-    register_node(server_addr, dir_ip.to_string());
-    loop {
-        let mut res = reqwest::blocking::get(&format!("{}{}", dir_ip, "get-peers/"))
-            .expect("Could not connect to directory server");
-        let mut body = String::new();
-        res.read_to_string(&mut body).unwrap();
-        let peers_list : HashSet<String> = serde_json::from_str(&body).unwrap();
-        if peers_list.len() >= 3 {
-            break;
-        }
-    }
-    let mut digs = start_digs(port, dir_ip);
-    thread::sleep(time::Duration::from_secs(5));
     loop {
         if !endgame {
             change_direction(&mut snake);
@@ -42,28 +37,13 @@ async fn main() {
                 t = get_time();
                 move_snake(&mut snake);
                 let serialized = serde_json::to_string(&snake).unwrap();
-                digs.put(serialized).await;
+                c.put(&serialized);
                 endgame = check_collision(&mut snake);
             }   
         } 
         draw_snake(&mut snake);
         next_frame().await;
     }
-}
-
-pub fn register_node(server_ip :String, dir_ip:String) {
-    let mut add_res = reqwest::blocking::get(&format!("{}{}{}", dir_ip, "add-peer/", server_ip))
-            .expect("Could not connect to directory server");
-    let mut body = String::new();
-    add_res.read_to_string(&mut body).unwrap();
-    println!("Result from adding own id {}", body);
-}
-
-#[tokio::main]
-async fn start_digs(port: &str, dir_ip: &str) -> Digs {
-    let mut digs = Digs::new(&port, &dir_ip); // GUI code could go in here maybe?
-    digs.start().await;
-    return digs;
 }
 
 fn check_collision(s: &mut Snake) -> bool {

@@ -14,7 +14,6 @@ async fn main() {
 
     let mut digs = Digs::new(&port, &dir_ip); // GUI code could go in here maybe?
 
-    digs.register_node();
     digs.start().await;
 
     // game code
