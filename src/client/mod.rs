@@ -1,5 +1,5 @@
 
-use std::collections::HashMap;
+use std::{collections::HashMap, io::Read};
 
 use futures::executor::block_on;
 use rand::Rng;
@@ -39,8 +39,16 @@ impl Client {
         // println!("finding leader");
         let dst_ip = &match &self.current_leader {
             None => {
-                let n = rand::thread_rng().gen_range(0..self.peers.len());
-                self.peers[n].clone()
+                let mut res = reqwest::blocking::get("http://localhost:8000/get-leader/")
+                .expect("Could not connect to directory server");
+                let mut body = String::new();
+                res.read_to_string(&mut body).unwrap();
+                if body != "none" {
+                    "http://".to_string() + &body
+                } else {
+                    let n = rand::thread_rng().gen_range(0..self.peers.len());
+                    self.peers[n].clone()
+                }
             }
             Some(l) => "http://".to_string() + l,
         };
@@ -89,11 +97,13 @@ impl Client {
             Ok(res) => {
                 // println!("{:?}", res);
                 let r = res.into_inner();
-                self.current_leader = r.leader_id;
+                self.current_leader = r.leader_id.clone();
                 // try finding the leader again if put unsuccessful
                 if !r.success {
                     return self.put(key, value);
                 }
+                let url = format!("http://localhost:8000/set-leader/{ldr}", ldr=r.leader_id.clone().unwrap());
+                reqwest::blocking::get(&url);
                 return Ok(())
             }
             // Expected Ok, but failed for some reason

@@ -64,6 +64,7 @@ async fn main() {
                 for g_id in games_list.iter() {
                     let data = get_data(peers.clone(), g_id.to_string());
                     if data != "0" {
+                        println!("{:?}",data);
                         let e_snake : Snake = serde_json::from_str(&data).unwrap();
                         enemies.push(e_snake);
                     }

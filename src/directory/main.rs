@@ -36,15 +36,15 @@ fn get_leader(peers_state: &State<PeersStatePointer>) -> String {
     let leader = &peers_state.leader;
     match leader {
         Some(s) => {
-            return serde_json::to_string(&s).unwrap();
+            return s.to_string();
         }, 
         None => {
-            return serde_json::to_string("").unwrap();
+            return "none".to_string();
         }
     }
 }
 
-#[get("/set-leader?<leader>")]
+#[get("/set-leader/<leader>")]
 fn set_leader(leader: &str, peers_state: &State<PeersStatePointer>) -> String {
     let mut peers_state = peers_state.lock().unwrap();
     peers_state.leader = Some(String::from(leader));
